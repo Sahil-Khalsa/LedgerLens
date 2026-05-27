@@ -1,0 +1,26 @@
+# Secrets
+.env
+*.env
+
+# Data (large, reproducible from EDGAR)
+data/
+edgar_cache/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+dist/
+build/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Node
+app/node_modules/
+app/.next/
+
+# OS
+.DS_Store
+Thumbs.db
