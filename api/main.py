@@ -67,8 +67,9 @@ def _sse(event: str, data: object) -> str:
 
 async def _stream_baseline(req: QueryRequest, query_id: str) -> AsyncIterator[str]:
     """Run the text baseline pipeline and stream status + result events."""
-    from index.text_baseline import retrieve
     from openai import AsyncOpenAI
+
+    from index.text_baseline import retrieve
 
     yield _sse("status", {"stage": "retriever", "pipeline": "baseline"})
 

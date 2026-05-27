@@ -100,10 +100,7 @@ def numeric_exact_match(
 
         assert gold.answer_value is not None
         gold_val = gold.answer_value
-        if gold_val == 0:
-            match = abs(pred) < 1
-        else:
-            match = abs(pred - gold_val) / abs(gold_val) <= tol
+        match = abs(pred) < 1 if gold_val == 0 else abs(pred - gold_val) / abs(gold_val) <= tol
 
         if match:
             correct += 1

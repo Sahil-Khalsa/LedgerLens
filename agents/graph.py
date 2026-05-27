@@ -65,8 +65,9 @@ def _get_app() -> object:
     """Return a compiled graph. Adds PostgresSaver checkpointer when DB is available."""
     g = build_graph()
     try:
-        from config import settings
         from langgraph.checkpoint.postgres import PostgresSaver
+
+        from config import settings
 
         checkpointer = PostgresSaver.from_conn_string(settings.database_url)
         return g.compile(checkpointer=checkpointer)

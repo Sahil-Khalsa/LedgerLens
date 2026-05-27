@@ -28,8 +28,9 @@ def run_baseline_query(gold: GoldItem) -> QueryResult:
     Run one question through the text-only baseline pipeline.
     Retrieves from the chunks table, generates an answer with an LLM.
     """
-    from index.text_baseline import retrieve
     from openai import OpenAI
+
+    from index.text_baseline import retrieve
 
     start = time.monotonic()
     client = OpenAI()
