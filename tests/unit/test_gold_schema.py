@@ -4,6 +4,7 @@ Ensures malformed entries are caught before they silently break the eval runner.
 """
 
 import pytest
+from pydantic import ValidationError
 
 from eval.gold import GoldItem, load_gold_set
 
@@ -21,11 +22,11 @@ class TestGoldItem:
         assert item.kind == "numeric"
 
     def test_numeric_requires_answer_value(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             GoldItem(q="What was revenue?", kind="numeric")
 
     def test_reasoning_requires_rubric(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             GoldItem(q="How did margins trend?", kind="reasoning")
 
     def test_valid_reasoning_item(self) -> None:
@@ -37,7 +38,7 @@ class TestGoldItem:
         assert item.kind == "reasoning"
 
     def test_negative_requires_insufficient_data_status(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             GoldItem(
                 q="What was revenue in 2010?",
                 kind="negative",
@@ -53,7 +54,7 @@ class TestGoldItem:
         assert item.expected_status == "insufficient_data"
 
     def test_empty_question_raises(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             GoldItem(q="   ", kind="numeric", answer_value=100.0)
 
 

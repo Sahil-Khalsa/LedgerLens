@@ -5,11 +5,11 @@ gold_set.jsonl is versioned and committed. Never edit it to make a failing run p
 Each entry is validated against GoldItem on load — a malformed entry raises immediately.
 """
 
-import json
 import logging
 from collections import defaultdict
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator, Literal
+from typing import Literal
 
 from pydantic import BaseModel, field_validator, model_validator
 
@@ -47,11 +47,10 @@ class GoldItem(BaseModel):
             raise ValueError("numeric items require answer_value")
         if self.kind == "reasoning" and not self.rubric:
             raise ValueError("reasoning items require rubric")
-        if self.kind in ("negative", "adversarial"):
-            if self.expected_status != "insufficient_data":
-                raise ValueError(
-                    "negative/adversarial items must have expected_status=insufficient_data"
-                )
+        if self.kind in ("negative", "adversarial") and self.expected_status != "insufficient_data":
+            raise ValueError(
+                "negative/adversarial items must have expected_status=insufficient_data"
+            )
         return self
 
 

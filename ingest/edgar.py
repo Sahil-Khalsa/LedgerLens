@@ -12,7 +12,7 @@ Implements:
 import logging
 import threading
 import time
-from typing import Iterator
+from collections.abc import Iterator
 
 import requests
 import requests_cache

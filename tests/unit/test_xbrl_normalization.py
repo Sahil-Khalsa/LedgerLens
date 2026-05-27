@@ -6,11 +6,11 @@ Pure functions — no DB, no network, no LLM.
 import pytest
 
 from ingest.xbrl import (
+    _make_row,
     compare_with_tolerance,
     detect_filing_scale,
     normalize_display_value,
     normalize_facts,
-    _make_row,
 )
 
 

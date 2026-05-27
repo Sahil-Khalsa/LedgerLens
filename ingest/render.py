@@ -9,7 +9,6 @@ can separate visual-only from text-extractable pages.
 """
 
 import logging
-import os
 from pathlib import Path
 
 import fitz  # PyMuPDF

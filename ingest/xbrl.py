@@ -12,7 +12,7 @@ Key design decisions (all from SPEC.md §1):
 import io
 import logging
 import re
-from typing import Iterator
+from collections.abc import Iterator
 
 import ijson  # type: ignore[import-untyped]
 

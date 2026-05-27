@@ -6,7 +6,6 @@ All SEC HTTP traffic routes through ingest.edgar — never requests.get() direct
 """
 
 import logging
-import os
 from pathlib import Path
 
 from config import settings

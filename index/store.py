@@ -190,6 +190,118 @@ def drop_schema() -> None:
     Base.metadata.drop_all(engine)
 
 
+# ── Upsert helpers ───────────────────────────────────────────────────────────
+
+def upsert_filing(meta: dict[str, object], db: Session | None = None) -> Filing:
+    """
+    Insert or update a filing row from ingest metadata.
+    meta keys: accn, cik, ticker, form, filing_date, report_date,
+               primary_doc, html_path, filing_scale, is_amendment, amends_accn
+    """
+    own = db is None
+    if own:
+        db = SessionLocal()
+    try:
+        filing = db.query(Filing).filter(Filing.accn == meta["accn"]).first()
+        if filing is None:
+            filing = Filing()
+            db.add(filing)
+        for key, val in meta.items():
+            if hasattr(filing, key):
+                setattr(filing, key, val)
+        db.commit()
+        db.refresh(filing)
+        return filing
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        if own:
+            db.close()
+
+
+def upsert_pages(
+    accn: str,
+    pages: list[dict[str, object]],
+    db: Session | None = None,
+) -> None:
+    """
+    Insert or update page rows from render pipeline output.
+    pages: list of {page_idx, png_path, is_scanned}
+    Also updates filing.page_count.
+    """
+    own = db is None
+    if own:
+        db = SessionLocal()
+    try:
+        for p in pages:
+            existing = (
+                db.query(Page)
+                .filter(Page.filing_accn == accn, Page.page_idx == p["page_idx"])
+                .first()
+            )
+            if existing is None:
+                existing = Page(filing_accn=accn)
+                db.add(existing)
+            existing.page_idx = int(p["page_idx"])  # type: ignore[assignment]
+            existing.png_path = str(p["png_path"])  # type: ignore[assignment]
+            existing.is_scanned = bool(p.get("is_scanned", False))  # type: ignore[assignment]
+
+        filing = db.query(Filing).filter(Filing.accn == accn).first()
+        if filing:
+            filing.page_count = len(pages)  # type: ignore[assignment]
+
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        if own:
+            db.close()
+
+
+def upsert_xbrl_facts(
+    cik: str,
+    accn: str,
+    facts: list[dict[str, object]],
+    db: Session | None = None,
+) -> int:
+    """
+    Bulk-insert XBRL facts for a filing, replacing any existing rows for that accn.
+    Returns count of rows inserted.
+    """
+    own = db is None
+    if own:
+        db = SessionLocal()
+    try:
+        db.query(XbrlFact).filter(XbrlFact.accn == accn).delete()
+        rows = [
+            XbrlFact(
+                cik=cik,
+                accn=accn,
+                concept=str(f["concept"]),
+                unit=str(f.get("unit", "")),
+                value=float(f["value"]),  # type: ignore[arg-type]
+                start_date=str(f["start"]) if f.get("start") else None,
+                end_date=str(f["end"]) if f.get("end") else None,
+                fy=int(f["fy"]) if f.get("fy") else None,
+                fp=str(f["fp"]) if f.get("fp") else None,
+                form=str(f["form"]) if f.get("form") else None,
+                is_flow=bool(f.get("is_flow", False)),
+            )
+            for f in facts
+        ]
+        db.bulk_save_objects(rows)
+        db.commit()
+        return len(rows)
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        if own:
+            db.close()
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def _cli() -> None:

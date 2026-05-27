@@ -14,8 +14,8 @@ import asyncio
 import json
 import logging
 import uuid
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import AsyncIterator
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,7 +26,6 @@ from slowapi.util import get_remote_address
 
 from api.auth import verify_api_key
 from api.schemas import (
-    ErrorResponse,
     FilingMeta,
     FilingsResponse,
     HealthResponse,
@@ -35,7 +34,7 @@ from api.schemas import (
 )
 from api.validation import sanitize_question
 from config import settings
-from index.store import Filing, QueryLog, SessionLocal
+from index.store import Filing, SessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +74,6 @@ async def _stream_baseline(req: QueryRequest, query_id: str) -> AsyncIterator[st
 
     chunks = await asyncio.to_thread(retrieve, req.question, req.filing_accn, 5)
     context = "\n\n".join(c["content"] for c in chunks)
-    refs = [f"{c['accn']}:text" for c in chunks]
 
     yield _sse("status", {"stage": "synthesizer", "chunks_found": len(chunks)})
 
@@ -146,7 +144,7 @@ async def query(
     try:
         request.question = sanitize_question(request.question)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     query_id = str(uuid.uuid4())
     pipeline = request.pipeline if request.pipeline != "auto" else "baseline"
@@ -156,7 +154,6 @@ async def query(
             async for event in _stream_baseline(request, query_id):
                 yield event
         else:
-            # Visual pipeline wired in Phase 2
             yield _sse("result", {
                 "query_id": query_id,
                 "answer": None,
@@ -251,10 +248,12 @@ async def get_page(
 
 @app.get("/health")
 async def health() -> HealthResponse:
+    import sqlalchemy
+
     db_ok = False
     try:
         db = SessionLocal()
-        db.execute(__import__("sqlalchemy").text("SELECT 1"))
+        db.execute(sqlalchemy.text("SELECT 1"))
         db.close()
         db_ok = True
     except Exception:

@@ -65,8 +65,9 @@ def _get_app() -> object:
     """Return a compiled graph. Adds PostgresSaver checkpointer when DB is available."""
     g = build_graph()
     try:
-        from langgraph.checkpoint.postgres import PostgresSaver
         from config import settings
+        from langgraph.checkpoint.postgres import PostgresSaver
+
         checkpointer = PostgresSaver.from_conn_string(settings.database_url)
         return g.compile(checkpointer=checkpointer)
     except Exception:
@@ -80,7 +81,7 @@ app = _get_app()
 
 def _cli() -> None:
     import argparse
-    import json
+    import logging
 
     parser = argparse.ArgumentParser(description="Run a query through the agent graph")
     parser.add_argument("--q", required=True, help="Question to ask")
@@ -88,7 +89,6 @@ def _cli() -> None:
     parser.add_argument("--pipeline", default="baseline", choices=["baseline", "visual"])
     args = parser.parse_args()
 
-    import logging
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     initial_state: State = {
@@ -113,7 +113,7 @@ def _cli() -> None:
     print(f"\nRoute:  {result.get('route')}")
     print(f"Status: {result.get('answer_status')}")
     print(f"\nAnswer:\n{result.get('answer') or 'No answer generated'}")
-    print(f"\nFacts:")
+    print("\nFacts:")
     for f in result.get("facts", []):
         print(f"  [{f['verified']}] {f['text']} — {f['page_ref']}")
 

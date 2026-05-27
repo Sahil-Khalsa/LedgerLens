@@ -12,6 +12,10 @@ Metrics:
 import logging
 import re
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from eval.gold import GoldItem
 
 logger = logging.getLogger(__name__)
 
@@ -69,15 +73,13 @@ def _parse_value_from_answer(answer: str) -> float | None:
 
 
 def numeric_exact_match(
-    results: list[tuple["GoldItem", QueryResult]],  # type: ignore[name-defined]
+    results: list[tuple["GoldItem", QueryResult]],
     tol: float = 0.01,
 ) -> tuple[float, list[dict[str, object]]]:
     """
     Compute numeric exact-match rate.
     Returns (rate, failures) where failures lists items that did not match.
     """
-    from eval.gold import GoldItem
-
     correct = 0
     total = 0
     failures: list[dict[str, object]] = []
@@ -120,14 +122,12 @@ def numeric_exact_match(
 # ── Retrieval recall@k ────────────────────────────────────────────────────────
 
 def retrieval_recall_at_k(
-    results: list[tuple["GoldItem", QueryResult]],  # type: ignore[name-defined]
+    results: list[tuple["GoldItem", QueryResult]],
 ) -> float:
     """
     Was the ground-truth filing's page in the retrieved set?
     Uses gold item's accn to determine the relevant filing.
     """
-    from eval.gold import GoldItem
-
     hits = 0
     total = 0
     for gold, result in results:
@@ -145,17 +145,15 @@ def retrieval_recall_at_k(
 # ── Hallucination rate ────────────────────────────────────────────────────────
 
 def hallucination_rate(
-    results: list[tuple["GoldItem", QueryResult]],  # type: ignore[name-defined]
+    results: list[tuple["GoldItem", QueryResult]],
 ) -> float:
     """
     Fraction of answers that contain a numeric figure with no verified XBRL support
     and no cited page reference. Targets zero.
     """
-    from eval.gold import GoldItem
-
     hallucinated = 0
     total = 0
-    for gold, result in results:
+    for _gold, result in results:
         if result.answer_status == "insufficient_data":
             continue
         total += 1
@@ -173,14 +171,12 @@ def hallucination_rate(
 # ── Negative / adversarial accuracy ──────────────────────────────────────────
 
 def negative_accuracy(
-    results: list[tuple["GoldItem", QueryResult]],  # type: ignore[name-defined]
+    results: list[tuple["GoldItem", QueryResult]],
 ) -> float | None:
     """
     Fraction of negative/adversarial items correctly answered with insufficient_data.
     Returns None if no such items in the set.
     """
-    from eval.gold import GoldItem
-
     correct = 0
     total = 0
     for gold, result in results:
@@ -196,7 +192,7 @@ def negative_accuracy(
 # ── Aggregate ─────────────────────────────────────────────────────────────────
 
 def compute_all(
-    results: list[tuple["GoldItem", QueryResult]],  # type: ignore[name-defined]
+    results: list[tuple["GoldItem", QueryResult]],
 ) -> MetricResult:
     em, failures = numeric_exact_match(results)
     recall = retrieval_recall_at_k(results)

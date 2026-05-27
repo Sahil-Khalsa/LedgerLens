@@ -110,7 +110,7 @@ def index_filing(accn: str, html_path: str, db: Session | None = None) -> int:
         model = _get_embed_model()
         embeddings = model.encode(raw_chunks, show_progress_bar=False, normalize_embeddings=True)
 
-        for i, (content, emb) in enumerate(zip(raw_chunks, embeddings)):
+        for i, (content, emb) in enumerate(zip(raw_chunks, embeddings, strict=True)):
             db.add(Chunk(
                 filing_accn=accn,
                 chunk_idx=i,

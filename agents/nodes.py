@@ -7,10 +7,9 @@ Phase 3: full synthesizer and critic with reflection loop.
 """
 
 import logging
-import time
 from typing import Any
 
-from agents.state import Critique, Fact, PageResult, State
+from agents.state import Critique, Fact, State
 from api.validation import wrap_user_content
 from config import settings
 
@@ -85,8 +84,8 @@ def _lookup_xbrl_fact(
     period_start: str | None,
 ) -> Fact | None:
     """Query the xbrl_facts table for a single fact."""
-    from ingest.xbrl import match_period
     from index.store import SessionLocal, XbrlFact
+    from ingest.xbrl import match_period
 
     db = SessionLocal()
     try:
@@ -96,12 +95,12 @@ def _lookup_xbrl_fact(
             .all()
         )
         for row in rows:
-            f = {
+            f: dict[str, object] = {
                 "end": row.end_date,
                 "start": row.start_date,
                 "is_flow": row.is_flow,
             }
-            if match_period(f, period_end, period_start):  # type: ignore[arg-type]
+            if match_period(f, period_end, period_start):
                 return Fact(
                     text=f"{concept} = {row.value} {row.unit}",
                     value=row.value,
@@ -124,7 +123,6 @@ def numerical_verifier(state: State) -> dict[str, Any]:
     """
     from index.store import SessionLocal, XbrlFact
     from ingest.xbrl import compare_with_tolerance
-    from ingest.xbrl_concepts import CONCEPT_TO_CANONICAL
 
     db = SessionLocal()
     verified_facts: list[Fact] = []
@@ -151,7 +149,6 @@ def numerical_verifier(state: State) -> dict[str, Any]:
                     break
 
             if not matched:
-                # Check if any row exists for this concept (mismatch vs unverifiable)
                 if rows:
                     verified_facts.append({**fact, "verified": "mismatch"})
                     logger.warning("Mismatch: %s extracted %.2f", fact["concept"], fact["value"])
@@ -182,7 +179,6 @@ def synthesizer(state: State) -> dict[str, Any]:
             "draft": None,
         }
 
-    client = OpenAI()
     facts_text = "\n".join(
         f"- {f['text']} [cite: {f['page_ref']}] [status: {f['verified']}]"
         for f in verified + unverifiable
@@ -219,6 +215,8 @@ def critic(state: State) -> dict[str, Any]:
     Faithfulness check: is every claim in the draft grounded in a retrieved page?
     If not and retries remain, returns missing_evidence as refined retrieval queries.
     """
+    import json
+
     from openai import OpenAI
 
     if not state.get("draft"):
@@ -231,7 +229,6 @@ def critic(state: State) -> dict[str, Any]:
             "retries": state.get("retries", 0) + 1,
         }
 
-    client = OpenAI()
     pages_summary = "; ".join(
         f"{p['accn']}:p{p['page_idx']}" for p in state.get("pages", [])[:10]
     )
@@ -251,8 +248,7 @@ Return JSON only:
   "ungrounded_claims": ["claim text..."],
   "missing_evidence": ["what to search for to ground each ungrounded claim"]}}"""
 
-    import json
-    resp = client.chat.completions.create(
+    resp = OpenAI().chat.completions.create(
         model=settings.planner_model,
         messages=[{"role": "user", "content": prompt}],
         response_format={"type": "json_object"},
@@ -269,7 +265,6 @@ Return JSON only:
     )
 
     new_retries = retries if grounded else retries + 1
-    # Use missing_evidence as refined retrieval queries on next loop
     new_plan = parsed.get("missing_evidence", []) if not grounded else state.get("plan", [])
 
     return {
