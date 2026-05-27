@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 # ── MaxSim scoring ────────────────────────────────────────────────────────────
 
+
 def maxsim(query_vecs: np.ndarray, page_vecs: np.ndarray) -> float:
     """
     Late-interaction score: for each query token, max similarity to any page patch.
@@ -36,11 +37,12 @@ def maxsim(query_vecs: np.ndarray, page_vecs: np.ndarray) -> float:
     page_vecs:  (Tp, d)
     Returns scalar score.
     """
-    sim = query_vecs @ page_vecs.T   # (Tq, Tp)
+    sim = query_vecs @ page_vecs.T  # (Tq, Tp)
     return float(sim.max(axis=1).sum())
 
 
 # ── Patch embedding cache ─────────────────────────────────────────────────────
+
 
 def patch_cache_path(accn: str, page_idx: int) -> Path:
     accn_nodashes = accn.replace("-", "")
@@ -67,6 +69,7 @@ def save_patch_vecs(accn: str, page_idx: int, vecs: np.ndarray) -> None:
 
 # ── Index (Phase 3) ───────────────────────────────────────────────────────────
 
+
 def index_filing(accn: str, png_paths: list[str]) -> None:
     """
     Embed all pages for a filing using ColPali.
@@ -78,6 +81,7 @@ def index_filing(accn: str, png_paths: list[str]) -> None:
 
 
 # ── Retrieval (Phase 3) ───────────────────────────────────────────────────────
+
 
 def retrieve(
     query: str,
@@ -97,6 +101,7 @@ def retrieve(
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
+
 
 def _cli() -> None:
     import argparse

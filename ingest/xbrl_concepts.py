@@ -101,9 +101,7 @@ CONCEPT_ALIASES: dict[str, list[str]] = {
 
 # Reverse map: concept name → canonical key (built once at import)
 CONCEPT_TO_CANONICAL: dict[str, str] = {
-    concept: canonical
-    for canonical, concepts in CONCEPT_ALIASES.items()
-    for concept in concepts
+    concept: canonical for canonical, concepts in CONCEPT_ALIASES.items() for concept in concepts
 }
 
 

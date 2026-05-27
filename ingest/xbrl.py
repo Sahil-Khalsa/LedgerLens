@@ -78,6 +78,7 @@ def compare_with_tolerance(extracted: float, xbrl: float, tol: float = 0.01) -> 
 
 # ── XBRL fact normalization ───────────────────────────────────────────────────
 
+
 def normalize_facts(companyfacts: dict[str, object]) -> list[dict[str, object]]:
     """
     Convert companyfacts JSON (already parsed into a dict) into a flat list of fact rows.
@@ -129,9 +130,7 @@ def stream_normalize_facts(cik10: str) -> Iterator[dict[str, object]]:
             stream.seek(0)
 
 
-def _make_row(
-    concept: str, unit: str, f: dict[str, object]
-) -> dict[str, object] | None:
+def _make_row(concept: str, unit: str, f: dict[str, object]) -> dict[str, object] | None:
     """Build a normalized fact row, returning None for restatement/incomplete entries."""
     val = f.get("val")
     accn = f.get("accn")
@@ -157,6 +156,7 @@ def _make_row(
 
 # ── Period matching ───────────────────────────────────────────────────────────
 
+
 def match_period(
     fact: dict[str, object],
     query_end: str,
@@ -173,6 +173,7 @@ def match_period(
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
+
 
 def _cli() -> None:
     import argparse

@@ -12,10 +12,10 @@ from typing import Annotated, Literal, TypedDict
 
 
 class Fact(TypedDict):
-    text: str                   # the extracted claim, e.g. "Q3 revenue was $47.5B"
-    value: float | None         # parsed numeric value, normalized to raw XBRL units
-    concept: str | None         # best-guess XBRL concept name (e.g. "Revenues")
-    page_ref: str               # "accn:page_idx" or "accn:xbrl" for fast-path facts
+    text: str  # the extracted claim, e.g. "Q3 revenue was $47.5B"
+    value: float | None  # parsed numeric value, normalized to raw XBRL units
+    concept: str | None  # best-guess XBRL concept name (e.g. "Revenues")
+    page_ref: str  # "accn:page_idx" or "accn:xbrl" for fast-path facts
     verified: Literal["match", "mismatch", "unverifiable", "pending"]
 
 
@@ -38,11 +38,11 @@ class State(TypedDict):
     # Input
     question: str
     ticker: str | None
-    filing_accn: str | None          # optional: scope retrieval to one filing
-    thread_id: str | None            # for multi-turn checkpointing
+    filing_accn: str | None  # optional: scope retrieval to one filing
+    thread_id: str | None  # for multi-turn checkpointing
 
     # Planner output
-    plan: list[str]                  # sub-questions / retrieval queries
+    plan: list[str]  # sub-questions / retrieval queries
     route: Literal["fast", "document"]
 
     # Retrieval (additive across reflection loops)

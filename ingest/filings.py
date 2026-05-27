@@ -42,9 +42,7 @@ def list_filings(
     all_rows = get_all_filing_rows(cik10)
 
     allowed = {f.upper() for f in forms} if forms else {f.upper() for f in SUPPORTED_FORMS}
-    filtered = [
-        r for r in all_rows if str(r.get("form", "")).upper() in allowed
-    ]
+    filtered = [r for r in all_rows if str(r.get("form", "")).upper() in allowed]
     filtered.sort(key=lambda r: str(r.get("filingDate", "")), reverse=True)
 
     if limit:
@@ -54,17 +52,19 @@ def list_filings(
     for r in filtered:
         accn = str(r["accessionNumber"])
         form = str(r["form"])
-        result.append({
-            "accn": accn,
-            "cik": cik10,
-            "ticker": ticker.upper(),
-            "form": form,
-            "filing_date": str(r.get("filingDate", "")),
-            "report_date": str(r.get("reportDate", "")),
-            "primary_doc": str(r.get("primaryDocument", "")),
-            "is_amendment": is_amendment(form),
-            "amends_accn": None,  # populated later if needed
-        })
+        result.append(
+            {
+                "accn": accn,
+                "cik": cik10,
+                "ticker": ticker.upper(),
+                "form": form,
+                "filing_date": str(r.get("filingDate", "")),
+                "report_date": str(r.get("reportDate", "")),
+                "primary_doc": str(r.get("primaryDocument", "")),
+                "is_amendment": is_amendment(form),
+                "amends_accn": None,  # populated later if needed
+            }
+        )
     return result
 
 
@@ -138,6 +138,7 @@ def ingest_filings(
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
+
 
 def _cli() -> None:
     import argparse

@@ -77,10 +77,7 @@ def get_ticker_to_cik() -> dict[str, str]:
     """
     url = "https://www.sec.gov/files/company_tickers.json"
     data: dict[str, dict[str, object]] = get(url).json()
-    return {
-        str(v["ticker"]).upper(): str(v["cik_str"]).zfill(10)
-        for v in data.values()
-    }
+    return {str(v["ticker"]).upper(): str(v["cik_str"]).zfill(10) for v in data.values()}
 
 
 def resolve_cik(ticker: str) -> str:
@@ -114,9 +111,7 @@ def get_all_filing_rows(cik10: str) -> list[dict[str, object]]:
     for extra in filings_block.get("files", []):
         assert isinstance(extra, dict)
         name = str(extra["name"])
-        extra_data: dict[str, object] = get(
-            f"https://data.sec.gov/submissions/{name}"
-        ).json()
+        extra_data: dict[str, object] = get(f"https://data.sec.gov/submissions/{name}").json()
         rows.extend(_extract_rows(extra_data))
 
     return rows

@@ -125,7 +125,12 @@ class TestNormalizeFacts:
                         "units": {
                             "USD": [
                                 # Flow fact — has start date
-                                {"val": 100, "accn": "001", "start": "2023-02-01", "end": "2024-01-28"},
+                                {
+                                    "val": 100,
+                                    "accn": "001",
+                                    "start": "2023-02-01",
+                                    "end": "2024-01-28",
+                                },
                             ]
                         }
                     },

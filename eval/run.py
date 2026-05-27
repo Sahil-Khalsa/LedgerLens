@@ -166,10 +166,16 @@ def _write_markdown_report(
         "## Metrics",
         "| Metric | Value |",
         "|--------|-------|",
-        f"| Numeric exact-match | {m.numeric_em:.1%}" if m.numeric_em is not None else "| Numeric exact-match | N/A |",
-        f"| Retrieval recall@k | {m.recall_at_k:.1%}" if m.recall_at_k is not None else "| Retrieval recall@k | N/A |",
+        f"| Numeric exact-match | {m.numeric_em:.1%}"
+        if m.numeric_em is not None
+        else "| Numeric exact-match | N/A |",
+        f"| Retrieval recall@k | {m.recall_at_k:.1%}"
+        if m.recall_at_k is not None
+        else "| Retrieval recall@k | N/A |",
         f"| Hallucination rate | {m.hallucination_rate:.1%} |",
-        f"| Negative accuracy | {m.negative_accuracy:.1%}" if m.negative_accuracy is not None else "| Negative accuracy | N/A |",
+        f"| Negative accuracy | {m.negative_accuracy:.1%}"
+        if m.negative_accuracy is not None
+        else "| Negative accuracy | N/A |",
         f"| Avg cost / query | ${m.avg_cost_usd:.4f} |",
         f"| Avg latency | {m.avg_latency_ms:.0f} ms |",
         "",
@@ -177,7 +183,9 @@ def _write_markdown_report(
     ]
     for f in m.failures[:10]:
         lines.append(f"- **{f.get('q', '')}**")
-        lines.append(f"  Gold: `{f.get('gold')}` | Predicted: `{f.get('predicted', 'N/A')}` | Reason: {f.get('reason', '')}")
+        lines.append(
+            f"  Gold: `{f.get('gold')}` | Predicted: `{f.get('predicted', 'N/A')}` | Reason: {f.get('reason', '')}"
+        )
         lines.append("")
 
     Path(md_path).write_text("\n".join(lines))
@@ -185,6 +193,7 @@ def _write_markdown_report(
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
+
 
 def _cli() -> None:
     import argparse
@@ -201,7 +210,11 @@ def _cli() -> None:
 
     print(f"\n{'='*50}")
     print(f"Pipeline: {args.pipeline}")
-    print(f"Numeric exact-match: {metrics.numeric_em:.1%}" if metrics.numeric_em is not None else "Numeric EM: N/A")
+    print(
+        f"Numeric exact-match: {metrics.numeric_em:.1%}"
+        if metrics.numeric_em is not None
+        else "Numeric EM: N/A"
+    )
     print(f"Hallucination rate:  {metrics.hallucination_rate:.1%}")
     if metrics.negative_accuracy is not None:
         print(f"Negative accuracy:   {metrics.negative_accuracy:.1%}")

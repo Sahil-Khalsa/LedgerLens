@@ -61,6 +61,7 @@ app.add_middleware(
 
 # ── SSE helpers ───────────────────────────────────────────────────────────────
 
+
 def _sse(event: str, data: object) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
@@ -136,6 +137,7 @@ async def _stream_baseline(req: QueryRequest, query_id: str) -> AsyncIterator[st
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
+
 @app.post("/query")
 @limiter.limit(f"{settings.rate_limit_per_minute}/minute")
 async def query(
@@ -155,18 +157,21 @@ async def query(
             async for event in _stream_baseline(request, query_id):
                 yield event
         else:
-            yield _sse("result", {
-                "query_id": query_id,
-                "answer": None,
-                "answer_status": "insufficient_data",
-                "facts": [],
-                "route": "document",
-                "retries": 0,
-                "cost_usd": 0.0,
-                "latency_ms": 0,
-                "pipeline": pipeline,
-                "thread_id": request.thread_id,
-            })
+            yield _sse(
+                "result",
+                {
+                    "query_id": query_id,
+                    "answer": None,
+                    "answer_status": "insufficient_data",
+                    "facts": [],
+                    "route": "document",
+                    "retries": 0,
+                    "cost_usd": 0.0,
+                    "latency_ms": 0,
+                    "pipeline": pipeline,
+                    "thread_id": request.thread_id,
+                },
+            )
             yield _sse("done", {})
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

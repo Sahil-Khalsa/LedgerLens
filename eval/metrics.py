@@ -23,23 +23,24 @@ logger = logging.getLogger(__name__)
 @dataclass
 class QueryResult:
     """Output of one pipeline run on one gold item."""
+
     question: str
     predicted_answer: str | None
-    answer_status: str                        # "answered" | "low_confidence" | "insufficient_data"
-    predicted_value: float | None             # parsed from the answer
+    answer_status: str  # "answered" | "low_confidence" | "insufficient_data"
+    predicted_value: float | None  # parsed from the answer
     facts: list[dict[str, object]] = field(default_factory=list)
-    retrieved_page_refs: list[str] = field(default_factory=list)   # ["accn:page_idx", ...]
+    retrieved_page_refs: list[str] = field(default_factory=list)  # ["accn:page_idx", ...]
     cost_usd: float = 0.0
     latency_ms: int = 0
 
 
 @dataclass
 class MetricResult:
-    numeric_em: float | None           # exact-match rate on numeric items
-    recall_at_k: float | None          # retrieval recall on numeric items
-    hallucination_rate: float          # fraction of answers with unsupported figures
-    citation_faithfulness: float       # fraction of cited facts that are verifiably correct
-    negative_accuracy: float | None    # fraction of negative/adversarial items correctly declined
+    numeric_em: float | None  # exact-match rate on numeric items
+    recall_at_k: float | None  # retrieval recall on numeric items
+    hallucination_rate: float  # fraction of answers with unsupported figures
+    citation_faithfulness: float  # fraction of cited facts that are verifiably correct
+    negative_accuracy: float | None  # fraction of negative/adversarial items correctly declined
     total_questions: int = 0
     numeric_questions: int = 0
     correct_numeric: int = 0
@@ -49,6 +50,7 @@ class MetricResult:
 
 
 # ── Numeric exact-match ───────────────────────────────────────────────────────
+
 
 def _parse_value_from_answer(answer: str) -> float | None:
     """Extract the first numeric value from a free-text answer string."""
@@ -95,7 +97,9 @@ def numeric_exact_match(
 
         pred = result.predicted_value or _parse_value_from_answer(result.predicted_answer or "")
         if pred is None:
-            failures.append({"q": gold.q, "reason": "no value extracted", "gold": gold.answer_value})
+            failures.append(
+                {"q": gold.q, "reason": "no value extracted", "gold": gold.answer_value}
+            )
             continue
 
         assert gold.answer_value is not None
@@ -105,18 +109,21 @@ def numeric_exact_match(
         if match:
             correct += 1
         else:
-            failures.append({
-                "q": gold.q,
-                "predicted": pred,
-                "gold": gold_val,
-                "rel_error": abs(pred - gold_val) / max(abs(gold_val), 1),
-            })
+            failures.append(
+                {
+                    "q": gold.q,
+                    "predicted": pred,
+                    "gold": gold_val,
+                    "rel_error": abs(pred - gold_val) / max(abs(gold_val), 1),
+                }
+            )
 
     rate = correct / total if total > 0 else 0.0
     return rate, failures
 
 
 # ── Retrieval recall@k ────────────────────────────────────────────────────────
+
 
 def retrieval_recall_at_k(
     results: list[tuple["GoldItem", QueryResult]],
@@ -141,6 +148,7 @@ def retrieval_recall_at_k(
 
 # ── Hallucination rate ────────────────────────────────────────────────────────
 
+
 def hallucination_rate(
     results: list[tuple["GoldItem", QueryResult]],
 ) -> float:
@@ -155,9 +163,8 @@ def hallucination_rate(
             continue
         total += 1
         for fact in result.facts:
-            if (
-                fact.get("verified") == "mismatch"
-                or (fact.get("verified") == "unverifiable" and not fact.get("page_ref"))
+            if fact.get("verified") == "mismatch" or (
+                fact.get("verified") == "unverifiable" and not fact.get("page_ref")
             ):
                 hallucinated += 1
                 break
@@ -166,6 +173,7 @@ def hallucination_rate(
 
 
 # ── Negative / adversarial accuracy ──────────────────────────────────────────
+
 
 def negative_accuracy(
     results: list[tuple["GoldItem", QueryResult]],
@@ -187,6 +195,7 @@ def negative_accuracy(
 
 
 # ── Aggregate ─────────────────────────────────────────────────────────────────
+
 
 def compute_all(
     results: list[tuple["GoldItem", QueryResult]],

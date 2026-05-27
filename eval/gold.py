@@ -117,12 +117,14 @@ def auto_generate(
 def _humanize(concept_name: str) -> str:
     """Convert CamelCase XBRL concept name to a human-readable label."""
     import re
+
     # Insert spaces before capital letters
     spaced = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", concept_name)
     return spaced.lower()
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
+
 
 def _cli() -> None:
     import argparse
@@ -144,6 +146,7 @@ def _cli() -> None:
     if args.auto and args.ticker:
         from ingest.edgar import resolve_cik
         from ingest.xbrl import stream_normalize_facts
+
         cik10 = resolve_cik(args.ticker)
         facts = list(stream_normalize_facts(cik10))
         for item in auto_generate(facts, args.ticker):

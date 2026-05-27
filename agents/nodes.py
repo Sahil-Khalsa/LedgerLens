@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 # ── Planner ───────────────────────────────────────────────────────────────────
 
+
 def planner(state: State) -> dict[str, Any]:
     """
     Decompose the question and decide routing:
@@ -52,6 +53,7 @@ Respond with JSON only:
     )
 
     import json
+
     parsed = json.loads(resp.choices[0].message.content or "{}")
     route = parsed.get("route", "document")
 
@@ -115,6 +117,7 @@ def _lookup_xbrl_fact(
 
 # ── Numerical verifier ────────────────────────────────────────────────────────
 
+
 def numerical_verifier(state: State) -> dict[str, Any]:
     """
     For each extracted Fact with a numeric value, compare against XBRL ground truth.
@@ -136,11 +139,7 @@ def numerical_verifier(state: State) -> dict[str, Any]:
                 verified_facts.append({**fact, "verified": "unverifiable"})
                 continue
 
-            rows = (
-                db.query(XbrlFact)
-                .filter(XbrlFact.concept == fact["concept"])
-                .all()
-            )
+            rows = db.query(XbrlFact).filter(XbrlFact.concept == fact["concept"]).all()
             matched = False
             for row in rows:
                 if compare_with_tolerance(fact["value"], row.value):
@@ -161,6 +160,7 @@ def numerical_verifier(state: State) -> dict[str, Any]:
 
 
 # ── Synthesizer ───────────────────────────────────────────────────────────────
+
 
 def synthesizer(state: State) -> dict[str, Any]:
     """
@@ -210,6 +210,7 @@ Answer:"""
 
 # ── Critic ────────────────────────────────────────────────────────────────────
 
+
 def critic(state: State) -> dict[str, Any]:
     """
     Faithfulness check: is every claim in the draft grounded in a retrieved page?
@@ -229,9 +230,7 @@ def critic(state: State) -> dict[str, Any]:
             "retries": state.get("retries", 0) + 1,
         }
 
-    pages_summary = "; ".join(
-        f"{p['accn']}:p{p['page_idx']}" for p in state.get("pages", [])[:10]
-    )
+    pages_summary = "; ".join(f"{p['accn']}:p{p['page_idx']}" for p in state.get("pages", [])[:10])
 
     prompt = f"""You are a faithfulness critic for a financial Q&A system.
 
@@ -276,6 +275,7 @@ Return JSON only:
 
 # ── Visual retriever (Phase 2 stub) ──────────────────────────────────────────
 
+
 def visual_retriever(state: State) -> dict[str, Any]:
     """
     Two-stage ColPali retrieval: pgvector cosine filter → MaxSim rerank.
@@ -286,6 +286,7 @@ def visual_retriever(state: State) -> dict[str, Any]:
 
 
 # ── Extractor (Phase 2 stub) ──────────────────────────────────────────────────
+
 
 def extractor(state: State) -> dict[str, Any]:
     """

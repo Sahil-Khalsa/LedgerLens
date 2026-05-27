@@ -54,6 +54,7 @@ def get_db() -> Session:
 
 # ── ORM models ────────────────────────────────────────────────────────────────
 
+
 class Base(DeclarativeBase):
     pass
 
@@ -78,10 +79,12 @@ class Filing(Base):
 
     pages: Any = relationship("Page", back_populates="filing", cascade="all, delete-orphan")
     chunks: Any = relationship("Chunk", back_populates="filing", cascade="all, delete-orphan")
-    xbrl_facts: Any = relationship("XbrlFact", back_populates="filing", cascade="all, delete-orphan")
+    xbrl_facts: Any = relationship(
+        "XbrlFact", back_populates="filing", cascade="all, delete-orphan"
+    )
 
 
-TEXT_EMBEDDING_DIM = 384   # all-MiniLM-L6-v2
+TEXT_EMBEDDING_DIM = 384  # all-MiniLM-L6-v2
 VISUAL_EMBEDDING_DIM = 128  # ColPali mean-pool dimension
 
 
@@ -153,9 +156,7 @@ class XbrlFact(Base):
 
     filing: Any = relationship("Filing", back_populates="xbrl_facts")
 
-    __table_args__ = (
-        Index("ix_xbrl_cik_concept_end", "cik", "concept", "end_date"),
-    )
+    __table_args__ = (Index("ix_xbrl_cik_concept_end", "cik", "concept", "end_date"),)
 
 
 class QueryLog(Base):
@@ -176,6 +177,7 @@ class QueryLog(Base):
 
 # ── Schema helpers ────────────────────────────────────────────────────────────
 
+
 def create_schema() -> None:
     """Create the pgvector extension and all tables. Idempotent."""
     with engine.connect() as conn:
@@ -191,6 +193,7 @@ def drop_schema() -> None:
 
 
 # ── Upsert helpers ───────────────────────────────────────────────────────────
+
 
 def upsert_filing(meta: dict[str, object], db: Session | None = None) -> Filing:
     """
@@ -303,6 +306,7 @@ def upsert_xbrl_facts(
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
+
 
 def _cli() -> None:
     import argparse

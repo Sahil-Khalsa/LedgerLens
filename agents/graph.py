@@ -80,6 +80,7 @@ app = _get_app()
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
+
 def _cli() -> None:
     import argparse
     import logging

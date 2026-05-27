@@ -69,6 +69,7 @@ def is_scanned_page(png_path: str) -> bool:
     """
     try:
         import pytesseract  # type: ignore[import-untyped]
+
         img = Image.open(png_path)
         text = pytesseract.image_to_string(img)
         return len(text.strip()) < 50
@@ -129,6 +130,7 @@ def render_filing(
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
+
 
 def _cli() -> None:
     import argparse

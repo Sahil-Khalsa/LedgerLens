@@ -43,6 +43,7 @@ def _get_embed_model() -> SentenceTransformer:
 
 # ── Text extraction ───────────────────────────────────────────────────────────
 
+
 def extract_text_from_html(html_path: str) -> str:
     """
     Extract visible text from an SEC filing HTML.
@@ -61,6 +62,7 @@ def extract_text_from_html(html_path: str) -> str:
 
 
 # ── Chunking ──────────────────────────────────────────────────────────────────
+
 
 def chunk_text(
     text: str,
@@ -85,6 +87,7 @@ def chunk_text(
 
 
 # ── Indexing ──────────────────────────────────────────────────────────────────
+
 
 def index_filing(accn: str, html_path: str, db: Session | None = None) -> int:
     """
@@ -111,12 +114,14 @@ def index_filing(accn: str, html_path: str, db: Session | None = None) -> int:
         embeddings = model.encode(raw_chunks, show_progress_bar=False, normalize_embeddings=True)
 
         for i, (content, emb) in enumerate(zip(raw_chunks, embeddings, strict=True)):
-            db.add(Chunk(
-                filing_accn=accn,
-                chunk_idx=i,
-                content=content,
-                embedding=emb.tolist(),
-            ))
+            db.add(
+                Chunk(
+                    filing_accn=accn,
+                    chunk_idx=i,
+                    content=content,
+                    embedding=emb.tolist(),
+                )
+            )
 
         # Mark filing as text-indexed
         filing = db.query(Filing).filter(Filing.accn == accn).first()
@@ -136,6 +141,7 @@ def index_filing(accn: str, html_path: str, db: Session | None = None) -> int:
 
 
 # ── Retrieval ─────────────────────────────────────────────────────────────────
+
 
 def retrieve(
     query: str,
@@ -179,6 +185,7 @@ def retrieve(
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
+
 
 def _cli() -> None:
     import argparse
