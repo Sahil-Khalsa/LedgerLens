@@ -208,7 +208,7 @@ def _cli() -> None:
 
     metrics = run_eval(args.pipeline, subset=args.subset, report_path=args.report)
 
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"Pipeline: {args.pipeline}")
     print(
         f"Numeric exact-match: {metrics.numeric_em:.1%}"
@@ -218,7 +218,7 @@ def _cli() -> None:
     print(f"Hallucination rate:  {metrics.hallucination_rate:.1%}")
     if metrics.negative_accuracy is not None:
         print(f"Negative accuracy:   {metrics.negative_accuracy:.1%}")
-    print(f"{'='*50}")
+    print(f"{'=' * 50}")
 
 
 if __name__ == "__main__":

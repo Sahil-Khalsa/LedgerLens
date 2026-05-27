@@ -206,7 +206,7 @@ def _cli() -> None:
     if args.query:
         results = retrieve(args.query, accn=args.accn, top_k=args.topk)
         for i, r in enumerate(results):
-            print(f"\n--- Result {i+1} (score={r['score']:.3f}, accn={r['accn']}) ---")
+            print(f"\n--- Result {i + 1} (score={r['score']:.3f}, accn={r['accn']}) ---")
             print(r["content"][:500])
 
 
