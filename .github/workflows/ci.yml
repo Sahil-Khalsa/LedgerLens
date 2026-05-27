@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-type:
+    name: Lint & type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v2
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Ruff format check
+        run: uv run ruff format --check .
+
+      - name: Mypy type check
+        run: uv run mypy .
+
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v2
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Run unit tests
+        run: uv run pytest tests/unit/ -v --tb=short
+
+  eval-gate:
+    name: Eval gate
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: ledgerlens
+          POSTGRES_PASSWORD: ledgerlens
+          POSTGRES_DB: ledgerlens
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v2
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Run migrations
+        run: uv run alembic upgrade head
+        env:
+          DATABASE_URL: postgresql+psycopg://ledgerlens:ledgerlens@localhost:5432/ledgerlens
+
+      - name: Run eval (CI subset)
+        run: uv run python -m eval.run --pipeline baseline --subset ci --report results.json
+        env:
+          DATABASE_URL: postgresql+psycopg://ledgerlens:ledgerlens@localhost:5432/ledgerlens
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          EDGAR_USER_AGENT: "LedgerLens CI ci@ledgerlens.dev"
+
+      - name: Eval gate
+        run: uv run python -m eval.gate results.json
+        env:
+          EVAL_MIN_NUMERIC_EM: ${{ vars.EVAL_MIN_NUMERIC_EM || '0.0' }}
+          EVAL_MAX_HALLUCINATION: ${{ vars.EVAL_MAX_HALLUCINATION || '1.0' }}
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-report
+          path: |
+            results.json
+            results.md
