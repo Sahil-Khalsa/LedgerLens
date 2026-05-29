@@ -54,30 +54,26 @@ class MetricResult:
 
 def _parse_value_from_answer(answer: str) -> float | None:
     """Extract the first numeric value from a free-text answer string."""
-    # Match numbers like 47,532 or 47.5 or $47.5B (with scale suffix)
-    patterns = [
-        r"\$?([\d,]+\.?\d*)\s*[Bb]illion",
-        r"\$?([\d,]+\.?\d*)\s*[Mm]illion",
-        r"\$?([\d,]+\.?\d*)\s*[Tt]rillion",
-        r"\$?([\d,]+\.?\d*)",
+    scaled: list[tuple[str, float]] = [
+        (r"\$?([\d,]+\.?\d*)\s*trillion", 1e12),
+        (r"\$?([\d,]+\.?\d*)\s*billion", 1e9),
+        (r"\$?([\d,]+\.?\d*)\s*million", 1e6),
     ]
-    scale_map = {"billion": 1e9, "million": 1e6, "trillion": 1e12}
-
-    for pattern in patterns:
+    for pattern, multiplier in scaled:
         m = re.search(pattern, answer, re.IGNORECASE)
         if m:
-            raw = float(m.group(1).replace(",", ""))
-            for scale_word, multiplier in scale_map.items():
-                if scale_word in pattern.lower() and scale_word.lower() in answer.lower():
-                    return raw * multiplier
-            return raw
+            return float(m.group(1).replace(",", "")) * multiplier
+
+    m = re.search(r"\$?([\d,]+\.?\d*)", answer)
+    if m:
+        return float(m.group(1).replace(",", ""))
     return None
 
 
 def numeric_exact_match(
     results: list[tuple["GoldItem", QueryResult]],
     tol: float = 0.01,
-) -> tuple[float, list[dict[str, object]]]:
+) -> tuple[float, int, int, list[dict[str, object]]]:
     """
     Compute numeric exact-match rate.
     Returns (rate, failures) where failures lists items that did not match.
@@ -87,7 +83,7 @@ def numeric_exact_match(
     failures: list[dict[str, object]] = []
 
     for gold, result in results:
-        if gold.kind != "numeric":
+        if gold.kind != "numeric" or gold.answer_value is None:
             continue
         total += 1
 
@@ -119,7 +115,7 @@ def numeric_exact_match(
             )
 
     rate = correct / total if total > 0 else 0.0
-    return rate, failures
+    return rate, correct, total, failures
 
 
 # ── Retrieval recall@k ────────────────────────────────────────────────────────
@@ -200,7 +196,7 @@ def negative_accuracy(
 def compute_all(
     results: list[tuple["GoldItem", QueryResult]],
 ) -> MetricResult:
-    em, failures = numeric_exact_match(results)
+    em, numeric_correct, numeric_total, failures = numeric_exact_match(results)
     recall = retrieval_recall_at_k(results)
     hall = hallucination_rate(results)
     neg_acc = negative_accuracy(results)
@@ -215,6 +211,8 @@ def compute_all(
         citation_faithfulness=1.0 - hall,
         negative_accuracy=neg_acc,
         total_questions=len(results),
+        numeric_questions=numeric_total,
+        correct_numeric=numeric_correct,
         avg_cost_usd=sum(costs) / len(costs) if costs else 0.0,
         avg_latency_ms=sum(latencies) / len(latencies) if latencies else 0.0,
         failures=failures,
