@@ -106,14 +106,17 @@ async def _stream_baseline(req: QueryRequest, query_id: str) -> AsyncIterator[st
     )
 
     answer_tokens: list[str] = []
-    async with client.chat.completions.stream(
+    stream = await client.chat.completions.create(
         model=settings.planner_model,
         messages=[{"role": "user", "content": prompt}],
         max_tokens=256,
-    ) as stream:
-        async for text in stream.text_stream:
-            answer_tokens.append(text)
-            yield _sse("token", {"text": text})
+        stream=True,
+    )
+    async for chunk in stream:
+        delta = chunk.choices[0].delta.content if chunk.choices else None
+        if delta:
+            answer_tokens.append(delta)
+            yield _sse("token", {"text": delta})
 
     answer = "".join(answer_tokens)
     answer_status: Literal["answered", "insufficient_data"] = (

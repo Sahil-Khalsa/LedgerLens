@@ -16,7 +16,7 @@ import logging
 from collections.abc import Generator
 from typing import Any
 
-from pgvector.sqlalchemy import Vector  # type: ignore[import-untyped]
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
     Column,
@@ -249,7 +249,7 @@ def upsert_pages(
             if existing is None:
                 existing = Page(filing_accn=accn)
                 db.add(existing)
-            existing.page_idx = int(p["page_idx"])  # type: ignore[arg-type]
+            existing.page_idx = int(p["page_idx"])  # type: ignore[call-overload]
             existing.png_path = str(p["png_path"])
             existing.is_scanned = bool(p.get("is_scanned", False))
 
@@ -291,7 +291,7 @@ def upsert_xbrl_facts(
                 value=float(f["value"]),  # type: ignore[arg-type]
                 start_date=str(f["start"]) if f.get("start") else None,
                 end_date=str(f["end"]) if f.get("end") else None,
-                fy=int(f["fy"]) if f.get("fy") else None,  # type: ignore[arg-type]
+                fy=int(f["fy"]) if f.get("fy") else None,  # type: ignore[call-overload]
                 fp=str(f["fp"]) if f.get("fp") else None,
                 form=str(f["form"]) if f.get("form") else None,
                 is_flow=bool(f.get("is_flow", False)),
