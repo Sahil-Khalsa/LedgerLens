@@ -16,6 +16,7 @@ import logging
 import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -110,19 +111,19 @@ async def _stream_baseline(req: QueryRequest, query_id: str) -> AsyncIterator[st
         messages=[{"role": "user", "content": prompt}],
         max_tokens=256,
     ) as stream:
-        async for chunk in stream:
-            delta = chunk.choices[0].delta.content if chunk.choices else None
-            if delta:
-                answer_tokens.append(delta)
-                yield _sse("token", {"text": delta})
+        async for text in stream.text_stream:
+            answer_tokens.append(text)
+            yield _sse("token", {"text": text})
 
     answer = "".join(answer_tokens)
-    status = "insufficient_data" if "not found" in answer.lower() else "answered"
+    answer_status: Literal["answered", "insufficient_data"] = (
+        "insufficient_data" if "not found" in answer.lower() else "answered"
+    )
 
     result = QueryResponse(
         query_id=query_id,
         answer=answer,
-        answer_status=status,
+        answer_status=answer_status,
         facts=[],
         route="document",
         retries=0,

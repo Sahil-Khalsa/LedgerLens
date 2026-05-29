@@ -58,7 +58,8 @@ def load_patch_vecs(accn: str, page_idx: int) -> np.ndarray | None:
     path = patch_cache_path(accn, page_idx)
     if not path.exists():
         return None
-    return np.load(str(path)).astype(np.float32)
+    result: np.ndarray = np.load(str(path)).astype(np.float32)
+    return result
 
 
 def save_patch_vecs(accn: str, page_idx: int, vecs: np.ndarray) -> None:

@@ -68,7 +68,7 @@ def is_scanned_page(png_path: str) -> bool:
     Falls back to False if pytesseract is not installed.
     """
     try:
-        import pytesseract  # type: ignore[import-untyped]
+        import pytesseract
 
         img = Image.open(png_path)
         text = pytesseract.image_to_string(img)

@@ -14,7 +14,7 @@ import logging
 import re
 from collections.abc import Iterator
 
-import ijson  # type: ignore[import-untyped]
+import ijson
 
 from ingest.edgar import get_stream, resolve_cik
 

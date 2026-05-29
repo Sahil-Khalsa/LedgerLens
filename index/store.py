@@ -13,6 +13,7 @@ Tables:
 from __future__ import annotations
 
 import logging
+from collections.abc import Generator
 from typing import Any
 
 from pgvector.sqlalchemy import Vector  # type: ignore[import-untyped]
@@ -43,11 +44,11 @@ engine = create_engine(settings.database_url, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
-def get_db() -> Session:
+def get_db() -> Generator[Session, None, None]:
     """Dependency for FastAPI routes. Use as a context manager."""
     db = SessionLocal()
     try:
-        yield db  # type: ignore[misc]
+        yield db
     finally:
         db.close()
 
@@ -204,6 +205,7 @@ def upsert_filing(meta: dict[str, object], db: Session | None = None) -> Filing:
     own = db is None
     if own:
         db = SessionLocal()
+    assert db is not None
     try:
         filing = db.query(Filing).filter(Filing.accn == meta["accn"]).first()
         if filing is None:
@@ -236,6 +238,7 @@ def upsert_pages(
     own = db is None
     if own:
         db = SessionLocal()
+    assert db is not None
     try:
         for p in pages:
             existing = (
@@ -246,13 +249,13 @@ def upsert_pages(
             if existing is None:
                 existing = Page(filing_accn=accn)
                 db.add(existing)
-            existing.page_idx = int(p["page_idx"])  # type: ignore[assignment]
-            existing.png_path = str(p["png_path"])  # type: ignore[assignment]
-            existing.is_scanned = bool(p.get("is_scanned", False))  # type: ignore[assignment]
+            existing.page_idx = int(p["page_idx"])  # type: ignore[arg-type]
+            existing.png_path = str(p["png_path"])
+            existing.is_scanned = bool(p.get("is_scanned", False))
 
         filing = db.query(Filing).filter(Filing.accn == accn).first()
         if filing:
-            filing.page_count = len(pages)  # type: ignore[assignment]
+            filing.page_count = len(pages)
 
         db.commit()
     except Exception:
@@ -276,6 +279,7 @@ def upsert_xbrl_facts(
     own = db is None
     if own:
         db = SessionLocal()
+    assert db is not None
     try:
         db.query(XbrlFact).filter(XbrlFact.accn == accn).delete()
         rows = [
@@ -287,7 +291,7 @@ def upsert_xbrl_facts(
                 value=float(f["value"]),  # type: ignore[arg-type]
                 start_date=str(f["start"]) if f.get("start") else None,
                 end_date=str(f["end"]) if f.get("end") else None,
-                fy=int(f["fy"]) if f.get("fy") else None,
+                fy=int(f["fy"]) if f.get("fy") else None,  # type: ignore[arg-type]
                 fp=str(f["fp"]) if f.get("fp") else None,
                 form=str(f["form"]) if f.get("form") else None,
                 is_flow=bool(f.get("is_flow", False)),

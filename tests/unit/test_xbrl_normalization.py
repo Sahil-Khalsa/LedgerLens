@@ -82,7 +82,7 @@ class TestCompareWithTolerance:
 
 class TestNormalizeFacts:
     def test_skips_null_values(self) -> None:
-        companyfacts = {
+        companyfacts: dict[str, object] = {
             "facts": {
                 "us-gaap": {
                     "Revenues": {
@@ -101,7 +101,7 @@ class TestNormalizeFacts:
         assert rows[0]["value"] == 60922000000
 
     def test_skips_missing_accn(self) -> None:
-        companyfacts = {
+        companyfacts: dict[str, object] = {
             "facts": {
                 "us-gaap": {
                     "Revenues": {
@@ -118,7 +118,7 @@ class TestNormalizeFacts:
         assert len(rows) == 0
 
     def test_flow_vs_stock_tagging(self) -> None:
-        companyfacts = {
+        companyfacts: dict[str, object] = {
             "facts": {
                 "us-gaap": {
                     "Revenues": {

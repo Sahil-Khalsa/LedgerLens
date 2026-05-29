@@ -97,6 +97,7 @@ def index_filing(accn: str, html_path: str, db: Session | None = None) -> int:
     own_session = db is None
     if own_session:
         db = SessionLocal()
+    assert db is not None
 
     try:
         # Clear any existing chunks for this filing (re-index safe)
@@ -157,6 +158,7 @@ def retrieve(
     own_session = db is None
     if own_session:
         db = SessionLocal()
+    assert db is not None
 
     try:
         model = _get_embed_model()

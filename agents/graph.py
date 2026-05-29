@@ -5,7 +5,7 @@ Phase 1: planner → verifier (fast path) OR retriever stub → synthesizer → 
 Phase 2: visual_retriever and extractor nodes fully wired.
 """
 
-from typing import Literal
+from typing import Any, Literal
 
 from langgraph.graph import END, StateGraph
 
@@ -28,7 +28,7 @@ def _route_after_critic(state: State) -> Literal["retriever", "__end__"]:
     critique = state.get("critique")
     if critique and not critique["grounded"] and (state.get("retries", 0) < 2):
         return "retriever"
-    return END
+    return "__end__"
 
 
 def build_graph() -> StateGraph:  # type: ignore[type-arg]
@@ -61,7 +61,7 @@ def build_graph() -> StateGraph:  # type: ignore[type-arg]
     return g
 
 
-def _get_app() -> object:
+def _get_app() -> Any:
     """Return a compiled graph. Adds PostgresSaver checkpointer when DB is available."""
     g = build_graph()
     try:
