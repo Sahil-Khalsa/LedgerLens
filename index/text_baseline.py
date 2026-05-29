@@ -49,6 +49,11 @@ def extract_text_from_html(html_path: str) -> str:
     Extract visible text from an SEC filing HTML.
     Strips scripts, styles, and excessive whitespace.
     """
+    import warnings
+
+    from bs4 import XMLParsedAsHTMLWarning
+
+    warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
     html = Path(html_path).read_text(encoding="utf-8", errors="replace")
     soup = BeautifulSoup(html, "lxml")
 
