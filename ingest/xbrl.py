@@ -112,10 +112,10 @@ def stream_normalize_facts(cik10: str) -> Iterator[dict[str, object]]:
     stream = io.BytesIO(raw_bytes)
 
     for taxonomy in ("us-gaap", "dei"):
+        stream.seek(0)  # reset before each taxonomy pass (BytesIO is already in memory)
         prefix = f"facts.{taxonomy}"
         try:
             for concept, body in ijson.kvitems(stream, prefix):
-                stream.seek(0)  # ijson needs a fresh read per prefix call
                 if not isinstance(body, dict):
                     continue
                 for unit, fact_list in body.get("units", {}).items():
@@ -127,7 +127,6 @@ def stream_normalize_facts(cik10: str) -> Iterator[dict[str, object]]:
                             yield row
         except Exception:
             logger.warning("ijson parse error for taxonomy=%s cik=%s", taxonomy, cik10)
-            stream.seek(0)
 
 
 def _make_row(concept: str, unit: str, f: dict[str, object]) -> dict[str, object] | None:
