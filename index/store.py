@@ -57,7 +57,7 @@ def get_db() -> Generator[Session, None, None]:
 
 
 class Base(DeclarativeBase):
-    pass
+    __allow_unmapped__ = True
 
 
 class Filing(Base):
