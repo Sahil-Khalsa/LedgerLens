@@ -5,6 +5,11 @@
 # Data (large, reproducible from EDGAR)
 data/
 edgar_cache/
+edgar_cache.sqlite
+
+# Eval outputs (generated, not source)
+results.json
+results.md
 
 # Python
 __pycache__/
