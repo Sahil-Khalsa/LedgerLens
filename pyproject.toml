@@ -23,6 +23,8 @@ dependencies = [
     "alembic>=1.13",
     # Embeddings / ML
     "sentence-transformers>=3.0",
+    "colpali-engine>=0.3",
+    "transformers>=4.40",
     "numpy>=1.26",
     "torch>=2.3",
     # Agents

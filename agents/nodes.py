@@ -9,7 +9,7 @@ Phase 3: full synthesizer and critic with reflection loop.
 import logging
 from typing import Any
 
-from agents.state import Critique, Fact, State
+from agents.state import Critique, Fact, PageResult, State
 from api.validation import wrap_user_content
 from config import settings
 
@@ -273,25 +273,131 @@ Return JSON only:
     }
 
 
-# ── Visual retriever (Phase 2 stub) ──────────────────────────────────────────
+# ── Visual retriever ─────────────────────────────────────────────────────────
 
 
 def visual_retriever(state: State) -> dict[str, Any]:
     """
     Two-stage ColPali retrieval: pgvector cosine filter → MaxSim rerank.
-    Stub in Phase 1 — wired to index/visual.py in Phase 2.
+    Each query in state["plan"] is issued independently; results are deduped
+    by (accn, page_idx) keeping the highest MaxSim score.
     """
-    logger.warning("visual_retriever called but not yet implemented (Phase 2)")
-    return {"pages": []}
+    from index.visual import retrieve as visual_retrieve
+
+    queries = state.get("plan") or [state["question"]]
+    accn = state.get("filing_accn")
+
+    raw: list[PageResult] = []
+    for q in queries:
+        pages = visual_retrieve(q, accn=accn, top_k=settings.retrieval_top_k)
+        for p in pages:
+            raw.append(
+                PageResult(
+                    accn=str(p["accn"]),
+                    page_idx=int(p["page_idx"]),  # type: ignore[arg-type]
+                    png_path=str(p["png_path"]),
+                    score=float(p["score"]),  # type: ignore[arg-type]
+                    continued_on_page=None,
+                )
+            )
+
+    # Dedup by (accn, page_idx), keep highest score
+    best: dict[tuple[str, int], PageResult] = {}
+    for p in raw:
+        key = (p["accn"], p["page_idx"])
+        if key not in best or p["score"] > best[key]["score"]:
+            best[key] = p
+
+    return {"pages": list(best.values())}
 
 
-# ── Extractor (Phase 2 stub) ──────────────────────────────────────────────────
+# ── Extractor ─────────────────────────────────────────────────────────────────
 
 
 def extractor(state: State) -> dict[str, Any]:
     """
-    Send top-k reranked page images to the VLM and extract Fact objects.
-    Stub in Phase 1 — wired in Phase 2.
+    Send top-k reranked page images to GPT-4o vision and extract Fact objects.
+    Only pages with an existing PNG file are sent to the VLM.
+    The VLM is the expensive operation — only called with top-k pages, never the whole filing.
     """
-    logger.warning("extractor called but not yet implemented (Phase 2)")
-    return {"facts": []}
+    import base64
+    import json
+    from pathlib import Path
+
+    from openai import OpenAI
+
+    pages = state.get("pages", [])
+    if not pages:
+        return {"facts": []}
+
+    top_pages = sorted(pages, key=lambda p: p["score"], reverse=True)[: settings.retrieval_top_k]
+
+    client = OpenAI()
+    facts: list[Fact] = []
+
+    for page in top_pages:
+        png_path = page["png_path"]
+        if not Path(png_path).exists():
+            logger.warning("PNG not found: %s", png_path)
+            continue
+
+        img_bytes = Path(png_path).read_bytes()
+        b64 = base64.standard_b64encode(img_bytes).decode()
+
+        prompt = (
+            "Extract every numeric financial fact visible on this filing page.\n"
+            "Return a JSON object with key 'facts', value an array where each item has:\n"
+            '  "text": the full claim as a sentence,\n'
+            '  "value": the numeric value as a raw number (null if non-numeric),\n'
+            '  "concept": best-guess XBRL concept name (e.g. "Revenues"), null if unknown.\n\n'
+            f"{wrap_user_content(state['question'])}"
+        )
+
+        resp = client.chat.completions.create(
+            model=settings.synthesizer_model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{b64}", "detail": "high"},
+                        },
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=1024,
+        )
+
+        try:
+            parsed = json.loads(resp.choices[0].message.content or "{}")
+            items: list[dict[str, object]] = []
+            if isinstance(parsed, list):
+                items = parsed
+            elif isinstance(parsed, dict):
+                raw = parsed.get("facts", [])
+                items = raw if isinstance(raw, list) else []
+
+            for item in items:
+                raw_val = item.get("value")
+                facts.append(
+                    Fact(
+                        text=str(item.get("text", "")),
+                        value=float(raw_val) if raw_val is not None else None,  # type: ignore[arg-type]
+                        concept=str(item["concept"]) if item.get("concept") else None,
+                        page_ref=f"{page['accn']}:{page['page_idx']}",
+                        verified="pending",
+                    )
+                )
+        except Exception as exc:
+            logger.warning(
+                "Extractor parse error for %s page %d: %s",
+                page["accn"],
+                page["page_idx"],
+                exc,
+            )
+
+    logger.info("Extracted %d facts from %d pages", len(facts), len(top_pages))
+    return {"facts": facts}
