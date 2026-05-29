@@ -2,6 +2,10 @@
 .env
 *.env
 
+# Claude Code (AI assistant config — not part of the project)
+CLAUDE.md
+.claude/
+
 # Data (large, reproducible from EDGAR)
 data/
 edgar_cache/
