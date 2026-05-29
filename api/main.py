@@ -139,6 +139,85 @@ async def _stream_baseline(req: QueryRequest, query_id: str) -> AsyncIterator[st
     yield _sse("done", {})
 
 
+async def _stream_visual(req: QueryRequest, query_id: str) -> AsyncIterator[str]:
+    """Run the full LangGraph agent graph and stream node-level status + result events."""
+    import time
+
+    from agents.graph import app
+    from agents.state import State
+    from api.schemas import FactResult
+
+    thread_id = req.thread_id or query_id
+    start = time.monotonic()
+
+    initial_state: State = {
+        "question": req.question,
+        "ticker": req.ticker,
+        "filing_accn": req.filing_accn,
+        "thread_id": thread_id,
+        "plan": [],
+        "route": "document",
+        "pages": [],
+        "facts": [],
+        "draft": None,
+        "answer": None,
+        "answer_status": None,
+        "critique": None,
+        "retries": 0,
+        "cost_usd": 0.0,
+        "latency_ms": 0,
+    }
+
+    config: dict[str, object] = {"configurable": {"thread_id": thread_id}}
+
+    # Accumulate final state across node updates
+    final: dict[str, object] = dict(initial_state)  # type: ignore[arg-type]
+
+    async for chunk in app.astream(initial_state, config=config, stream_mode="updates"):  # type: ignore[call-overload]
+        node_name = next(iter(chunk))
+        yield _sse("status", {"stage": node_name, "pipeline": "visual"})
+        updates: dict[str, object] = chunk[node_name]
+        final.update(updates)
+
+    latency_ms = int((time.monotonic() - start) * 1000)
+    answer = final.get("answer")
+    raw_status = str(final.get("answer_status") or "insufficient_data")
+    valid_statuses = {"answered", "low_confidence", "insufficient_data", "error"}
+    answer_status: Literal["answered", "low_confidence", "insufficient_data", "error"] = (
+        raw_status if raw_status in valid_statuses else "insufficient_data"  # type: ignore[assignment]
+    )
+    raw_route = str(final.get("route") or "document")
+    route: Literal["fast", "document"] = "fast" if raw_route == "fast" else "document"
+
+    raw_facts = final.get("facts", [])
+    facts = [
+        FactResult(
+            text=str(f["text"]),
+            value=f.get("value"),  # type: ignore[arg-type]
+            concept=f.get("concept"),  # type: ignore[arg-type]
+            page_ref=str(f["page_ref"]),
+            verified=f.get("verified", "pending"),  # type: ignore[arg-type]
+        )
+        for f in (raw_facts if isinstance(raw_facts, list) else [])
+        if f.get("verified") in ("match", "unverifiable")  # drop mismatch
+    ]
+
+    result = QueryResponse(
+        query_id=query_id,
+        answer=str(answer) if answer else None,
+        answer_status=answer_status,
+        facts=facts,
+        route=route,
+        retries=int(final.get("retries", 0)),  # type: ignore[arg-type]
+        cost_usd=float(final.get("cost_usd", 0.0)),  # type: ignore[arg-type]
+        latency_ms=latency_ms,
+        pipeline="visual",
+        thread_id=req.thread_id,
+    )
+    yield _sse("result", result.model_dump())
+    yield _sse("done", {})
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 
@@ -154,29 +233,15 @@ async def query(
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     query_id = str(uuid.uuid4())
-    pipeline = request.pipeline if request.pipeline != "auto" else "baseline"
+    pipeline = request.pipeline if request.pipeline != "auto" else "visual"
 
     async def event_stream() -> AsyncIterator[str]:
         if pipeline == "baseline":
             async for event in _stream_baseline(request, query_id):
                 yield event
         else:
-            yield _sse(
-                "result",
-                {
-                    "query_id": query_id,
-                    "answer": None,
-                    "answer_status": "insufficient_data",
-                    "facts": [],
-                    "route": "document",
-                    "retries": 0,
-                    "cost_usd": 0.0,
-                    "latency_ms": 0,
-                    "pipeline": pipeline,
-                    "thread_id": request.thread_id,
-                },
-            )
-            yield _sse("done", {})
+            async for event in _stream_visual(request, query_id):
+                yield event
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 

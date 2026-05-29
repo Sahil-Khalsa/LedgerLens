@@ -7,6 +7,9 @@ Phase 3: full synthesizer and critic with reflection loop.
 """
 
 import logging
+import time
+from collections.abc import Generator
+from contextlib import contextmanager
 from typing import Any
 
 from agents.state import Critique, Fact, PageResult, State
@@ -14,6 +17,46 @@ from api.validation import wrap_user_content
 from config import settings
 
 logger = logging.getLogger(__name__)
+
+
+# ── Langfuse tracing (no-op when not configured) ──────────────────────────────
+
+
+def _get_langfuse() -> Any:
+    """Return a Langfuse client if configured, else None."""
+    if not settings.langfuse_public_key:
+        return None
+    try:
+        from langfuse import Langfuse
+
+        return Langfuse(
+            public_key=settings.langfuse_public_key,
+            secret_key=settings.langfuse_secret_key,
+            host=settings.langfuse_host,
+        )
+    except Exception:
+        return None
+
+
+@contextmanager
+def _span(name: str, input_data: dict[str, Any] | None = None) -> Generator[Any, None, None]:
+    """Context manager that creates a Langfuse span when configured, else is a no-op."""
+    lf = _get_langfuse()
+    start = time.monotonic()
+    span = None
+    try:
+        if lf is not None:
+            trace = lf.trace(name=name, input=input_data or {})
+            span = trace.span(name=name)
+        yield span
+    finally:
+        elapsed = int((time.monotonic() - start) * 1000)
+        if span is not None:
+            try:
+                span.end(metadata={"latency_ms": elapsed})
+                lf.flush()  # type: ignore[union-attr]
+            except Exception:
+                pass
 
 
 # ── Planner ───────────────────────────────────────────────────────────────────
@@ -25,6 +68,11 @@ def planner(state: State) -> dict[str, Any]:
     - fast: single XBRL fact lookup, skip retrieval and VLM entirely
     - document: needs page retrieval and extraction
     """
+    with _span("planner", {"question": state["question"]}):
+        return _planner(state)
+
+
+def _planner(state: State) -> dict[str, Any]:
     from openai import OpenAI
 
     client = OpenAI()
@@ -119,12 +167,20 @@ def _lookup_xbrl_fact(
 
 
 def numerical_verifier(state: State) -> dict[str, Any]:
+    with _span("numerical_verifier", {"facts_count": len(state["facts"])}):
+        return _numerical_verifier(state)
+
+
+def _numerical_verifier(state: State) -> dict[str, Any]:
     """
     For each extracted Fact with a numeric value, compare against XBRL ground truth.
     Sets verified = match | mismatch | unverifiable.
     Fast-path facts arrive pre-verified as "match".
+
+    Amendment preference: when multiple rows exist for the same concept, rows from
+    amendment filings (10-K/A, 10-Q/A) are checked first — they supersede the original.
     """
-    from index.store import SessionLocal, XbrlFact
+    from index.store import Filing, SessionLocal, XbrlFact
     from ingest.xbrl import compare_with_tolerance
 
     db = SessionLocal()
@@ -139,7 +195,15 @@ def numerical_verifier(state: State) -> dict[str, Any]:
                 verified_facts.append({**fact, "verified": "unverifiable"})
                 continue
 
-            rows = db.query(XbrlFact).filter(XbrlFact.concept == fact["concept"]).all()
+            # Prefer amendment facts: join to filings and sort amendments first
+            rows = (
+                db.query(XbrlFact)
+                .join(Filing, Filing.accn == XbrlFact.accn)
+                .filter(XbrlFact.concept == fact["concept"])
+                .order_by(Filing.is_amendment.desc())
+                .all()
+            )
+
             matched = False
             for row in rows:
                 if compare_with_tolerance(fact["value"], row.value):
@@ -163,10 +227,14 @@ def numerical_verifier(state: State) -> dict[str, Any]:
 
 
 def synthesizer(state: State) -> dict[str, Any]:
-    """
-    Compose the final answer from verified facts only.
-    Never emits a mismatch figure. Degrades gracefully when no verified facts exist.
-    """
+    with _span(
+        "synthesizer",
+        {"verified_facts": sum(1 for f in state["facts"] if f["verified"] == "match")},
+    ):
+        return _synthesizer(state)
+
+
+def _synthesizer(state: State) -> dict[str, Any]:
     from openai import OpenAI
 
     verified = [f for f in state["facts"] if f["verified"] == "match"]
@@ -212,10 +280,11 @@ Answer:"""
 
 
 def critic(state: State) -> dict[str, Any]:
-    """
-    Faithfulness check: is every claim in the draft grounded in a retrieved page?
-    If not and retries remain, returns missing_evidence as refined retrieval queries.
-    """
+    with _span("critic", {"retries": state.get("retries", 0)}):
+        return _critic(state)
+
+
+def _critic(state: State) -> dict[str, Any]:
     import json
 
     from openai import OpenAI
@@ -277,11 +346,11 @@ Return JSON only:
 
 
 def visual_retriever(state: State) -> dict[str, Any]:
-    """
-    Two-stage ColPali retrieval: pgvector cosine filter → MaxSim rerank.
-    Each query in state["plan"] is issued independently; results are deduped
-    by (accn, page_idx) keeping the highest MaxSim score.
-    """
+    with _span("visual_retriever", {"queries": len(state.get("plan") or [state["question"]])}):
+        return _visual_retriever(state)
+
+
+def _visual_retriever(state: State) -> dict[str, Any]:
     from index.visual import retrieve as visual_retrieve
 
     queries = state.get("plan") or [state["question"]]
@@ -315,11 +384,11 @@ def visual_retriever(state: State) -> dict[str, Any]:
 
 
 def extractor(state: State) -> dict[str, Any]:
-    """
-    Send top-k reranked page images to GPT-4o vision and extract Fact objects.
-    Only pages with an existing PNG file are sent to the VLM.
-    The VLM is the expensive operation — only called with top-k pages, never the whole filing.
-    """
+    with _span("extractor", {"pages": len(state.get("pages", []))}):
+        return _extractor(state)
+
+
+def _extractor(state: State) -> dict[str, Any]:
     import base64
     import json
     from pathlib import Path
