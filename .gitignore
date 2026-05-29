@@ -6,6 +6,12 @@
 CLAUDE.md
 .claude/
 
+# Internal documentation (architecture, spec, runbook, roadmap)
+DESIGN.md
+SPEC.md
+SOP.md
+ROADMAP.md
+
 # Data (large, reproducible from EDGAR)
 data/
 edgar_cache/
