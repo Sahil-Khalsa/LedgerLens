@@ -277,7 +277,7 @@ The text baseline serves as the comparison number. The visual pipeline with ColP
 | API | FastAPI + Server-Sent Events streaming · `slowapi` rate limiting |
 | Frontend | Next.js 14 + Tailwind CSS |
 | Observability | Langfuse spans on all 6 agent nodes |
-| Tooling | `uv` · `ruff` · `mypy --strict` · `pytest` · `pre-commit` |
+| Tooling | `uv` · `ruff` · `mypy` (strict mode) · `pytest` · `pre-commit` |
 
 ## Project Structure
 
@@ -333,7 +333,7 @@ LedgerLens/
 │   │                                #   _stream_baseline: text-only pipeline
 │   │                                #   _stream_visual: LangGraph graph via astream()
 │   ├── schemas.py                   # Pydantic v2 request/response models
-│   ├── auth.py                      # X-API-Key SHA-256 verification, --generate CLI
+│   ├── auth.py                      # X-API-Key SHA-256 verification, key generation CLI
 │   └── validation.py               # question sanitization, <user_question> wrapping
 │
 ├── app/                             # Next.js 14 + Tailwind CSS frontend
