@@ -25,6 +25,9 @@ def _route_after_planner(state: State) -> Literal["verifier", "retriever"]:
 
 
 def _route_after_critic(state: State) -> Literal["retriever", "__end__"]:
+    # Fast-path facts are XBRL-verified; critic cannot add value by re-retrieving.
+    if state.get("route") == "fast":
+        return "__end__"
     critique = state.get("critique")
     if critique and not critique["grounded"] and (state.get("retries", 0) < 2):
         return "retriever"

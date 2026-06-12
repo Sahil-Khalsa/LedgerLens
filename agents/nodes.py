@@ -133,31 +133,48 @@ def _lookup_xbrl_fact(
     period_end: str,
     period_start: str | None,
 ) -> Fact | None:
-    """Query the xbrl_facts table for a single fact."""
-    from index.store import SessionLocal, XbrlFact
-    from ingest.xbrl import match_period
+    """
+    Query xbrl_facts for a single fact, scoped to the given ticker.
+
+    Two-pass: exact end_date first, then year-fuzzy fallback.
+    Year-fuzzy handles off-calendar fiscal years (e.g. NVDA FY2024 ends 2024-01-28,
+    but the planner may guess 2024-12-31).
+    """
+    from index.store import Filing, SessionLocal, XbrlFact
 
     db = SessionLocal()
     try:
-        rows = (
+        # Build a query scoped to the ticker
+        base = (
             db.query(XbrlFact)
-            .filter(XbrlFact.concept == concept, XbrlFact.end_date == period_end)
-            .all()
+            .join(Filing, Filing.accn == XbrlFact.accn)
+            .filter(XbrlFact.concept == concept, Filing.ticker == ticker.upper())
         )
+
+        # Pass 1: exact date
+        rows = base.filter(XbrlFact.end_date == period_end).all()
+
+        # Pass 2: year-only fuzzy match — same year, prefer annual forms
+        if not rows and len(period_end) >= 4:
+            year = period_end[:4]
+            rows = (
+                base.filter(XbrlFact.end_date.like(f"{year}-%"))
+                .order_by(Filing.is_amendment.desc(), XbrlFact.end_date.desc())
+                .all()
+            )
+            # Prefer annual facts (10-K / 10-K/A) over quarterly ones
+            annual = [r for r in rows if r.form and "10-K" in r.form]
+            if annual:
+                rows = annual
+
         for row in rows:
-            f: dict[str, object] = {
-                "end": row.end_date,
-                "start": row.start_date,
-                "is_flow": row.is_flow,
-            }
-            if match_period(f, period_end, period_start):
-                return Fact(
-                    text=f"{concept} = {row.value} {row.unit}",
-                    value=row.value,
-                    concept=concept,
-                    page_ref=f"{row.accn}:xbrl",
-                    verified="match",
-                )
+            return Fact(
+                text=f"{concept} = {row.value} {row.unit}",
+                value=row.value,
+                concept=concept,
+                page_ref=f"{row.accn}:xbrl",
+                verified="match",
+            )
     finally:
         db.close()
     return None
@@ -351,24 +368,66 @@ def visual_retriever(state: State) -> dict[str, Any]:
 
 
 def _visual_retriever(state: State) -> dict[str, Any]:
-    from index.visual import retrieve as visual_retrieve
-
     queries = state.get("plan") or [state["question"]]
     accn = state.get("filing_accn")
 
     raw: list[PageResult] = []
-    for q in queries:
-        pages = visual_retrieve(q, accn=accn, top_k=settings.retrieval_top_k)
-        for p in pages:
-            raw.append(
-                PageResult(
-                    accn=str(p["accn"]),
-                    page_idx=int(p["page_idx"]),  # type: ignore[arg-type]
-                    png_path=str(p["png_path"]),
-                    score=float(p["score"]),  # type: ignore[arg-type]
-                    continued_on_page=None,
-                )
+
+    # Try ColPali visual retrieval first; fall back to text retrieval if unavailable.
+    use_visual = True
+    try:
+        from index.visual import retrieve as visual_retrieve
+
+        # Probe: if no pages have pooled embeddings, skip to text fallback.
+        from index.store import Page, SessionLocal
+
+        db = SessionLocal()
+        try:
+            has_embeddings = (
+                db.query(Page).filter(Page.pooled_embedding.isnot(None)).first() is not None
             )
+        finally:
+            db.close()
+        use_visual = has_embeddings
+    except Exception:
+        use_visual = False
+
+    if use_visual:
+        try:
+            from index.visual import retrieve as visual_retrieve
+
+            for q in queries:
+                pages = visual_retrieve(q, accn=accn, top_k=settings.retrieval_top_k)
+                for p in pages:
+                    raw.append(
+                        PageResult(
+                            accn=str(p["accn"]),
+                            page_idx=int(p["page_idx"]),  # type: ignore[arg-type]
+                            png_path=str(p["png_path"]),
+                            score=float(p["score"]),  # type: ignore[arg-type]
+                            continued_on_page=None,
+                        )
+                    )
+        except Exception as exc:
+            logger.warning("Visual retrieval failed (%s), falling back to text retrieval", exc)
+            use_visual = False
+
+    if not use_visual or not raw:
+        from index.text_baseline import retrieve as text_retrieve
+
+        logger.info("Using text-baseline retrieval fallback")
+        for q in queries:
+            chunks = text_retrieve(q, accn=accn, top_k=settings.retrieval_top_k)
+            for c in chunks:
+                raw.append(
+                    PageResult(
+                        accn=str(c["accn"]),
+                        page_idx=int(c.get("chunk_idx", 0)),
+                        png_path="",
+                        score=float(c["score"]),
+                        continued_on_page=None,
+                    )
+                )
 
     # Dedup by (accn, page_idx), keep highest score
     best: dict[tuple[str, int], PageResult] = {}
@@ -381,6 +440,68 @@ def _visual_retriever(state: State) -> dict[str, Any]:
 
 
 # ── Extractor ─────────────────────────────────────────────────────────────────
+
+
+def _extract_from_text(client: Any, question: str, page: PageResult) -> list[Fact]:
+    """Extract facts from a text chunk when no PNG is available (text-fallback path)."""
+    import json
+
+    from index.store import Chunk, SessionLocal
+
+    db = SessionLocal()
+    try:
+        chunk = (
+            db.query(Chunk)
+            .filter(
+                Chunk.filing_accn == page["accn"],
+                Chunk.chunk_idx == page["page_idx"],
+            )
+            .first()
+        )
+        content = chunk.content if chunk else ""
+    finally:
+        db.close()
+
+    if not content:
+        return []
+
+    prompt = (
+        "Extract every numeric financial fact from the filing excerpt below.\n"
+        "Return a JSON object with key 'facts', value an array where each item has:\n"
+        '  "text": the full claim as a sentence,\n'
+        '  "value": the numeric value as a raw number (null if non-numeric),\n'
+        '  "concept": best-guess XBRL concept name (e.g. "Revenues"), null if unknown.\n\n'
+        f"Excerpt:\n{content[:4000]}\n\n"
+        f"{wrap_user_content(question)}"
+    )
+
+    resp = client.chat.completions.create(
+        model=settings.planner_model,
+        messages=[{"role": "user", "content": prompt}],
+        response_format={"type": "json_object"},
+        max_tokens=512,
+    )
+
+    try:
+        parsed = json.loads(resp.choices[0].message.content or "{}")
+        items: list[dict[str, object]] = []
+        if isinstance(parsed, dict):
+            raw = parsed.get("facts", [])
+            items = raw if isinstance(raw, list) else []
+
+        return [
+            Fact(
+                text=str(item.get("text", "")),
+                value=float(item["value"]) if item.get("value") is not None else None,  # type: ignore[arg-type]
+                concept=str(item["concept"]) if item.get("concept") else None,
+                page_ref=f"{page['accn']}:{page['page_idx']}",
+                verified="pending",
+            )
+            for item in items
+        ]
+    except Exception as exc:
+        logger.warning("Text extractor parse error for %s chunk %d: %s", page["accn"], page["page_idx"], exc)
+        return []
 
 
 def extractor(state: State) -> dict[str, Any]:
@@ -406,8 +527,11 @@ def _extractor(state: State) -> dict[str, Any]:
 
     for page in top_pages:
         png_path = page["png_path"]
-        if not Path(png_path).exists():
-            logger.warning("PNG not found: %s", png_path)
+
+        # Text fallback: no PNG available — use chunk content from DB
+        if not png_path or not Path(png_path).exists():
+            text_facts = _extract_from_text(client, state["question"], page)
+            facts.extend(text_facts)
             continue
 
         img_bytes = Path(png_path).read_bytes()
