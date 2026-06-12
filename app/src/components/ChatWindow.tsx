@@ -197,7 +197,7 @@ export function ChatWindow({ filingAccn, pipeline }: Props) {
                             <div className="flex flex-col gap-2">
                               {msg.result.facts.map((f, fi) => (
                                 <div key={fi} className="flex items-start gap-2 text-xs">
-                                  <CitationChip pageRef={f.page_ref} verified={f.verified} />
+                                  <CitationChip pageRef={f.page_ref} verified={f.verified} factText={f.text} bbox={f.bbox} />
                                   <span className="text-gray-500 leading-relaxed">{f.text}</span>
                                 </div>
                               ))}

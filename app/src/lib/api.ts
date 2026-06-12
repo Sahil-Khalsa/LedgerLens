@@ -40,6 +40,7 @@ export interface SSEResultEvent {
     concept: string | null;
     page_ref: string;
     verified: string;
+    bbox: number[] | null;
   }>;
   route: string;
   retries: number;

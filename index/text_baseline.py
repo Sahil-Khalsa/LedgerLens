@@ -146,6 +146,52 @@ def index_filing(accn: str, html_path: str, db: Session | None = None) -> int:
             db.close()
 
 
+def index_raw_text(accn: str, text: str, db: Session | None = None) -> int:
+    """
+    Chunk, embed, and store a plain-text document (e.g. earnings-call transcript).
+    Unlike index_filing(), this takes raw text instead of an HTML path.
+    Returns the number of chunks inserted.
+    """
+    own_session = db is None
+    if own_session:
+        db = SessionLocal()
+    assert db is not None
+
+    try:
+        db.query(Chunk).filter(Chunk.filing_accn == accn).delete()
+
+        if not text.strip():
+            logger.warning("Empty text for accn=%s — nothing indexed", accn)
+            return 0
+
+        raw_chunks = chunk_text(text)
+        logger.info("Chunked transcript %s into %d chunks", accn, len(raw_chunks))
+
+        model = _get_embed_model()
+        embeddings = model.encode(raw_chunks, show_progress_bar=False, normalize_embeddings=True)
+
+        for i, (content, emb) in enumerate(zip(raw_chunks, embeddings, strict=True)):
+            db.add(
+                Chunk(
+                    filing_accn=accn,
+                    chunk_idx=i,
+                    content=content,
+                    embedding=emb.tolist(),
+                )
+            )
+
+        db.commit()
+        logger.info("Indexed %d transcript chunks for accn=%s", len(raw_chunks), accn)
+        return len(raw_chunks)
+
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        if own_session:
+            db.close()
+
+
 # ── Retrieval ─────────────────────────────────────────────────────────────────
 
 

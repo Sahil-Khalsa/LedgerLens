@@ -18,6 +18,20 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
+# ── Per-token cost table (USD per token) ──────────────────────────────────────
+# Approximate; update when OpenAI revises pricing.
+_COST_PER_TOKEN: dict[str, tuple[float, float]] = {
+    "gpt-4o-mini":           (0.15 / 1_000_000, 0.60 / 1_000_000),
+    "gpt-4o":                (2.50 / 1_000_000, 10.00 / 1_000_000),
+    "gpt-4o-2024-11-20":     (2.50 / 1_000_000, 10.00 / 1_000_000),
+    "gpt-4o-mini-2024-07-18":(0.15 / 1_000_000, 0.60 / 1_000_000),
+}
+
+
+def _token_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
+    p, c = _COST_PER_TOKEN.get(model, (0.0, 0.0))
+    return p * prompt_tokens + c * completion_tokens
+
 
 # ── Langfuse tracing (no-op when not configured) ──────────────────────────────
 
@@ -102,6 +116,11 @@ Respond with JSON only:
 
     import json
 
+    cost = _token_cost(
+        settings.planner_model,
+        resp.usage.prompt_tokens if resp.usage else 0,
+        resp.usage.completion_tokens if resp.usage else 0,
+    )
     parsed = json.loads(resp.choices[0].message.content or "{}")
     route = parsed.get("route", "document")
 
@@ -118,12 +137,14 @@ Respond with JSON only:
                 "route": "fast",
                 "plan": [],
                 "facts": [fact],
+                "cost_usd": state.get("cost_usd", 0.0) + cost,
             }
 
     # Fall through to document route
     return {
         "route": "document",
         "plan": parsed.get("queries", [state["question"]]),
+        "cost_usd": state.get("cost_usd", 0.0) + cost,
     }
 
 
@@ -287,10 +308,20 @@ Answer:"""
         messages=[{"role": "user", "content": prompt}],
         max_tokens=512,
     )
+    cost = _token_cost(
+        settings.synthesizer_model,
+        resp.usage.prompt_tokens if resp.usage else 0,
+        resp.usage.completion_tokens if resp.usage else 0,
+    )
     draft = resp.choices[0].message.content or ""
     status = "answered" if verified else "low_confidence"
 
-    return {"draft": draft, "answer": draft, "answer_status": status}
+    return {
+        "draft": draft,
+        "answer": draft,
+        "answer_status": status,
+        "cost_usd": state.get("cost_usd", 0.0) + cost,
+    }
 
 
 # ── Critic ────────────────────────────────────────────────────────────────────
@@ -339,6 +370,11 @@ Return JSON only:
         response_format={"type": "json_object"},
         max_tokens=256,
     )
+    cost = _token_cost(
+        settings.planner_model,
+        resp.usage.prompt_tokens if resp.usage else 0,
+        resp.usage.completion_tokens if resp.usage else 0,
+    )
     parsed = json.loads(resp.choices[0].message.content or "{}")
     grounded: bool = bool(parsed.get("grounded", False))
     retries = state.get("retries", 0)
@@ -356,6 +392,7 @@ Return JSON only:
         "critique": critique,
         "retries": new_retries,
         "plan": new_plan,
+        "cost_usd": state.get("cost_usd", 0.0) + cost,
     }
 
 
@@ -376,10 +413,9 @@ def _visual_retriever(state: State) -> dict[str, Any]:
     # Try ColPali visual retrieval first; fall back to text retrieval if unavailable.
     use_visual = True
     try:
-        from index.visual import retrieve as visual_retrieve
-
         # Probe: if no pages have pooled embeddings, skip to text fallback.
         from index.store import Page, SessionLocal
+        from index.visual import retrieve as visual_retrieve
 
         db = SessionLocal()
         try:
@@ -442,7 +478,7 @@ def _visual_retriever(state: State) -> dict[str, Any]:
 # ── Extractor ─────────────────────────────────────────────────────────────────
 
 
-def _extract_from_text(client: Any, question: str, page: PageResult) -> list[Fact]:
+def _extract_from_text(client: Any, question: str, page: PageResult) -> tuple[list[Fact], float]:
     """Extract facts from a text chunk when no PNG is available (text-fallback path)."""
     import json
 
@@ -463,7 +499,8 @@ def _extract_from_text(client: Any, question: str, page: PageResult) -> list[Fac
         db.close()
 
     if not content:
-        return []
+        no_facts: list[Fact] = []
+        return no_facts, 0.0
 
     prompt = (
         "Extract every numeric financial fact from the filing excerpt below.\n"
@@ -481,6 +518,11 @@ def _extract_from_text(client: Any, question: str, page: PageResult) -> list[Fac
         response_format={"type": "json_object"},
         max_tokens=512,
     )
+    cost = _token_cost(
+        settings.planner_model,
+        resp.usage.prompt_tokens if resp.usage else 0,
+        resp.usage.completion_tokens if resp.usage else 0,
+    )
 
     try:
         parsed = json.loads(resp.choices[0].message.content or "{}")
@@ -489,7 +531,7 @@ def _extract_from_text(client: Any, question: str, page: PageResult) -> list[Fac
             raw = parsed.get("facts", [])
             items = raw if isinstance(raw, list) else []
 
-        return [
+        extracted: list[Fact] = [
             Fact(
                 text=str(item.get("text", "")),
                 value=float(item["value"]) if item.get("value") is not None else None,  # type: ignore[arg-type]
@@ -499,9 +541,11 @@ def _extract_from_text(client: Any, question: str, page: PageResult) -> list[Fac
             )
             for item in items
         ]
+        return extracted, cost
     except Exception as exc:
         logger.warning("Text extractor parse error for %s chunk %d: %s", page["accn"], page["page_idx"], exc)
-        return []
+        failed_facts: list[Fact] = []
+        return failed_facts, cost
 
 
 def extractor(state: State) -> dict[str, Any]:
@@ -524,14 +568,16 @@ def _extractor(state: State) -> dict[str, Any]:
 
     client = OpenAI()
     facts: list[Fact] = []
+    node_cost = 0.0
 
     for page in top_pages:
         png_path = page["png_path"]
 
         # Text fallback: no PNG available — use chunk content from DB
         if not png_path or not Path(png_path).exists():
-            text_facts = _extract_from_text(client, state["question"], page)
+            text_facts, chunk_cost = _extract_from_text(client, state["question"], page)
             facts.extend(text_facts)
+            node_cost += chunk_cost
             continue
 
         img_bytes = Path(png_path).read_bytes()
@@ -542,7 +588,9 @@ def _extractor(state: State) -> dict[str, Any]:
             "Return a JSON object with key 'facts', value an array where each item has:\n"
             '  "text": the full claim as a sentence,\n'
             '  "value": the numeric value as a raw number (null if non-numeric),\n'
-            '  "concept": best-guess XBRL concept name (e.g. "Revenues"), null if unknown.\n\n'
+            '  "concept": best-guess XBRL concept name (e.g. "Revenues"), null if unknown,\n'
+            '  "bbox": [x1, y1, x2, y2] as fractions 0-1 of page dimensions '
+            '(top-left origin), null if location is uncertain.\n\n'
             f"{wrap_user_content(state['question'])}"
         )
 
@@ -563,6 +611,11 @@ def _extractor(state: State) -> dict[str, Any]:
             response_format={"type": "json_object"},
             max_tokens=1024,
         )
+        node_cost += _token_cost(
+            settings.synthesizer_model,
+            resp.usage.prompt_tokens if resp.usage else 0,
+            resp.usage.completion_tokens if resp.usage else 0,
+        )
 
         try:
             parsed = json.loads(resp.choices[0].message.content or "{}")
@@ -575,6 +628,13 @@ def _extractor(state: State) -> dict[str, Any]:
 
             for item in items:
                 raw_val = item.get("value")
+                raw_bbox = item.get("bbox")
+                bbox: tuple[float, float, float, float] | None = None
+                if isinstance(raw_bbox, list) and len(raw_bbox) == 4:
+                    try:
+                        bbox = (float(raw_bbox[0]), float(raw_bbox[1]), float(raw_bbox[2]), float(raw_bbox[3]))  # type: ignore[assignment]
+                    except (TypeError, ValueError):
+                        bbox = None
                 facts.append(
                     Fact(
                         text=str(item.get("text", "")),
@@ -582,6 +642,7 @@ def _extractor(state: State) -> dict[str, Any]:
                         concept=str(item["concept"]) if item.get("concept") else None,
                         page_ref=f"{page['accn']}:{page['page_idx']}",
                         verified="pending",
+                        bbox=bbox,
                     )
                 )
         except Exception as exc:
@@ -593,4 +654,4 @@ def _extractor(state: State) -> dict[str, Any]:
             )
 
     logger.info("Extracted %d facts from %d pages", len(facts), len(top_pages))
-    return {"facts": facts}
+    return {"facts": facts, "cost_usd": state.get("cost_usd", 0.0) + node_cost}

@@ -46,14 +46,14 @@ def check_gate(
         passed = False
 
     if passed:
-        print("✓ Eval gate passed")
+        print("PASS: Eval gate passed")
         if numeric_em is not None:
             print(f"  Numeric EM:    {numeric_em:.1%}")
         print(f"  Hallucination: {hallucination:.1%}")
     else:
-        print("✗ Eval gate FAILED")
+        print("FAIL: Eval gate FAILED")
         for msg in failures:
-            print(f"  → {msg}")
+            print(f"  -> {msg}")
         print("\nFix the root cause. Do NOT lower the thresholds to go green.")
 
     return passed

@@ -6,6 +6,8 @@ import { pageImageUrl } from "@/lib/api";
 interface Props {
   pageRef: string;
   verified: string;
+  factText?: string;
+  bbox?: number[] | null;
 }
 
 const STYLES: Record<string, { chip: string; dot: string }> = {
@@ -15,12 +17,28 @@ const STYLES: Record<string, { chip: string; dot: string }> = {
   pending:      { chip: "bg-gray-100   text-gray-500   border-gray-200",      dot: "bg-gray-400"    },
 };
 
-export function CitationChip({ pageRef, verified }: Props) {
+function BboxOverlay({ bbox }: { bbox: number[] }) {
+  const [x1, y1, x2, y2] = bbox;
+  return (
+    <div
+      className="absolute border-2 border-amber-400 bg-amber-300/20 rounded-sm pointer-events-none"
+      style={{
+        left: `${x1 * 100}%`,
+        top: `${y1 * 100}%`,
+        width: `${(x2 - x1) * 100}%`,
+        height: `${(y2 - y1) * 100}%`,
+      }}
+    />
+  );
+}
+
+export function CitationChip({ pageRef, verified, factText, bbox }: Props) {
   const [open, setOpen] = useState(false);
   const [accn, rawIdx] = pageRef.split(":");
   const isXbrl = rawIdx === "xbrl";
   const pageIdx = isXbrl ? null : parseInt(rawIdx, 10);
   const style = STYLES[verified] ?? STYLES.pending;
+  const hasBbox = Array.isArray(bbox) && bbox.length === 4;
 
   return (
     <>
@@ -46,6 +64,9 @@ export function CitationChip({ pageRef, verified }: Props) {
               <div>
                 <p className="text-xs text-gray-400 font-mono">{accn}</p>
                 <p className="text-sm font-medium text-gray-800 mt-0.5">Page {pageIdx}</p>
+                {factText && (
+                  <p className="text-xs text-gray-500 mt-1 italic max-w-lg truncate">{factText}</p>
+                )}
               </div>
               <button
                 onClick={() => setOpen(false)}
@@ -56,11 +77,19 @@ export function CitationChip({ pageRef, verified }: Props) {
                 </svg>
               </button>
             </div>
-            <img
-              src={pageImageUrl(accn, pageIdx)}
-              alt={`Filing page ${pageIdx}`}
-              className="w-full rounded-lg border border-gray-200"
-            />
+            <div className="relative">
+              <img
+                src={pageImageUrl(accn, pageIdx)}
+                alt={`Filing page ${pageIdx}`}
+                className="w-full rounded-lg border border-gray-200"
+              />
+              {hasBbox && <BboxOverlay bbox={bbox!} />}
+            </div>
+            {hasBbox && (
+              <p className="text-[10px] text-amber-600 mt-2">
+                Highlighted region indicates the location of the cited figure on the page.
+              </p>
+            )}
           </div>
         </div>
       )}

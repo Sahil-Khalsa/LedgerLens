@@ -21,6 +21,7 @@ class FactResult(BaseModel):
     concept: str | None
     page_ref: str
     verified: Literal["match", "mismatch", "unverifiable", "pending"]
+    bbox: list[float] | None = None  # [x1%, y1%, x2%, y2%] in 0-1 range
 
 
 class QueryResponse(BaseModel):

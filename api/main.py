@@ -197,6 +197,7 @@ async def _stream_visual(req: QueryRequest, query_id: str) -> AsyncIterator[str]
             concept=f.get("concept"),  # type: ignore[arg-type]
             page_ref=str(f["page_ref"]),
             verified=f.get("verified", "pending"),  # type: ignore[arg-type]
+            bbox=list(f["bbox"]) if f.get("bbox") else None,
         )
         for f in (raw_facts if isinstance(raw_facts, list) else [])
         if f.get("verified") in ("match", "unverifiable")  # drop mismatch

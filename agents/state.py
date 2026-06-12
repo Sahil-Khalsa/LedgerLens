@@ -8,7 +8,7 @@ Rules:
 """
 
 from operator import add
-from typing import Annotated, Literal, TypedDict
+from typing import Annotated, Literal, NotRequired, TypedDict
 
 
 class Fact(TypedDict):
@@ -17,6 +17,7 @@ class Fact(TypedDict):
     concept: str | None  # best-guess XBRL concept name (e.g. "Revenues")
     page_ref: str  # "accn:page_idx" or "accn:xbrl" for fast-path facts
     verified: Literal["match", "mismatch", "unverifiable", "pending"]
+    bbox: NotRequired[tuple[float, float, float, float] | None]  # x1%, y1%, x2%, y2% (0-1)
 
 
 class Critique(TypedDict):
