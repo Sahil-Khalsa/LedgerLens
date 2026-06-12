@@ -14,11 +14,11 @@
   <img src="https://img.shields.io/badge/Hallucination-0.0%25-brightgreen?style=for-the-badge" />
 </p>
 
-**LedgerLens** is a full-stack multimodal intelligence engine for SEC financial filings. It retrieves over page *images* rather than mangled HTML text, cross-checks every extracted figure against the SEC's own XBRL structured data before it reaches the user, and attaches a `filing:page` citation to every numeric claim so the answer is always traceable back to the source document.
+**LedgerLens** is a full-stack multimodal intelligence engine for SEC financial filings. It retrieves over rendered page *images* rather than mangled HTML text, cross-checks every extracted figure against the SEC's own XBRL structured data before it reaches the user, and attaches a `filing:page` citation to every numeric claim so every answer is traceable back to the source document.
 
 > Every number LedgerLens shows is either verified against XBRL ground truth or explicitly flagged as unconfirmed. Invented figures are architecturally impossible.
 
-[Architecture](#system-architecture) · [Verification Pipeline](#the-verification-pipeline) · [Features](#features) · [Results](#results) · [Quick Start](#quick-start) · [Roadmap](#roadmap)
+[Architecture](#system-architecture) · [Verification Pipeline](#the-verification-pipeline) · [Features](#features) · [Results](#results) · [Quick Start](#quick-start)
 
 </div>
 
@@ -28,13 +28,13 @@ Financial Q&A over filings is a solved-looking problem that is actually unsolved
 
 | Typical RAG over Filings | LedgerLens |
 |---|---|
-| Chunks raw HTML text, loses table structure | Retrieves over rendered page *images*, tables print exactly as filed |
-| LLM extracts numbers with no ground truth check | Every figure cross-checked against SEC XBRL data before it ships |
-| No citations or unverifiable citations | Every claim carries `accn:page_idx`, no citation means no answer |
-| Hallucinated figures silently mixed with real ones | `mismatch` figures are dropped, `unverifiable` gets an explicit low-confidence flag |
-| One retrieval pass, one shot | Critic node runs faithfulness check and loops back to retriever with refined queries if ungrounded |
-| Whole filing sent to LLM | Only top-k reranked pages reach the VLM, never the whole filing |
-| Single-fact lookups hit expensive LLM path | Planner fast path answers direct XBRL lookups with zero retrieval and zero VLM cost |
+| Chunks raw HTML text, loses table structure | Retrieves over rendered page *images* — tables print exactly as filed |
+| LLM extracts numbers with no ground-truth check | Every figure cross-checked against SEC XBRL data before it ships |
+| No citations or unverifiable citations | Every claim carries `accn:page_idx` — no citation means no answer |
+| Hallucinated figures silently mixed with real ones | `mismatch` figures are dropped; `unverifiable` gets an explicit low-confidence flag |
+| One retrieval pass, one shot | Critic node runs a faithfulness check and loops back to the retriever with refined queries if ungrounded |
+| Whole filing sent to LLM | Only the top-k reranked pages reach the VLM — never the whole filing |
+| Single-fact lookups hit the expensive LLM path | Planner fast path answers direct XBRL lookups with zero retrieval and zero VLM cost |
 | No amendment awareness | Verifier prefers amendment facts (10-K/A, 10-Q/A) over originals for the same period |
 
 ## System Architecture
@@ -74,7 +74,7 @@ Financial Q&A over filings is a solved-looking problem that is actually unsolved
 ║     │                                        │   (GPT-4o Vision)    │            ║
 ║     │                                        │ reads page images    │            ║
 ║     │                                        │ → Fact objects with  │            ║
-║     │                                        │   page_ref citations │            ║
+║     │                                        │   page_ref + bbox    │            ║
 ║     │                                        └──────────┬───────────┘            ║
 ║     │                                                   │                        ║
 ║     └───────────────────────────────┐                   │                        ║
@@ -129,7 +129,8 @@ Financial Q&A over filings is a solved-looking problem that is actually unsolved
 ║   │  ingest/filings.py    ticker → CIK → filing list → HTML         │          ║
 ║   │  ingest/render.py     HTML → PDF (Playwright) → PNG per page    │          ║
 ║   │  ingest/xbrl.py       stream-parse ijson → normalize → DB       │          ║
-║   └────────────────────────────────┬─────────────────────────────────┘          ║
+║   │  ingest/asr.py        earnings call audio → Whisper → transcript │          ║
+║   └────────────────────────────┬─────────────────────────────────────┘          ║
 ║                                    │                                             ║
 ║                                    ▼                                             ║
 ║   ┌──────────────────────────────────────────────────────────────────┐          ║
@@ -137,7 +138,7 @@ Financial Q&A over filings is a solved-looking problem that is actually unsolved
 ║   │   filings          : metadata, amendment flags, index status     │          ║
 ║   │   pages            : per-page paths + mean-pooled vectors        │          ║
 ║   │   xbrl_facts       : normalized concept/value/period/accn        │          ║
-║   │   text_chunks      : HTML chunks + MiniLM embeddings             │          ║
+║   │   text_chunks      : HTML/transcript chunks + MiniLM embeddings  │          ║
 ║   └──────────────────────────────────────────────────────────────────┘          ║
 ║                    │                            │                                ║
 ║         ┌──────────┘                            └──────────┐                    ║
@@ -158,9 +159,10 @@ Every numeric claim passes through three gates before the user sees it.
 
 The extractor (GPT-4o Vision) reads the top-k reranked page images and returns structured `Fact` objects. Every fact includes:
 - `text`: the full claim as a sentence
-- `value`: raw numeric value
+- `value`: raw numeric value, normalized to XBRL units
 - `concept`: best-guess XBRL concept name (e.g. `Revenues`, `NetIncomeLoss`)
-- `page_ref`: `{accn}:{page_idx}`, the exact source location
+- `page_ref`: `{accn}:{page_idx}` — the exact source location
+- `bbox`: `[x1, y1, x2, y2]` as 0–1 fractions of page dimensions, for citation overlay
 - `verified`: initially `pending`
 
 ### Gate 2: XBRL Verification
@@ -185,28 +187,58 @@ After the synthesizer drafts an answer, the critic checks every numeric and fact
 
 Single-fact questions answerable directly from XBRL data bypass the entire retrieval and VLM pipeline:
 - `gpt-4o-mini` classifies the question as `fast` or `document`
-- `fast` route: queries `xbrl_facts` table directly, no retrieval, no VLM, answer in under 1 second
-- Result still passes through the verifier before reaching the synthesizer
+- `fast` route: queries `xbrl_facts` directly, no retrieval, no VLM, answer in under 1 second
+- Two-pass date matching: exact period first, then year-fuzzy fallback for off-calendar fiscal years
+- Still passes through the verifier before reaching the synthesizer
 
 ### Two-Stage Visual Retrieval (ColPali)
 
 ColPali produces ~1030 per-patch vectors per page. Retrieval runs in two stages:
 - **Stage 1:** pgvector cosine over mean-pooled patch vectors, top-50 candidate pages (fast, approximate)
 - **Stage 2:** MaxSim late interaction rerank over full patch embeddings, top-5 pages (accurate)
-- Query encoder is always ColPali's own `encode_query_meanpool()`, never a substituted sentence-transformer
+- Query encoder is always ColPali's own `encode_query_meanpool()` — never a substituted sentence-transformer
 - Patch vectors cached as `.npy` files to avoid re-embedding on subsequent queries
 
 ### Text Baseline Pipeline
 
-A complete text retrieval pipeline:
-- HTML filings chunked and embedded with `all-MiniLM-L6-v2`
-- Stored in pgvector with HNSW index
-- GPT-4o-mini synthesizes answer from retrieved context
+A complete text retrieval pipeline maintained as the comparison benchmark:
+- HTML filings chunked with tiktoken (512 tokens, 64-token overlap)
+- Embedded with `all-MiniLM-L6-v2`, stored in pgvector with HNSW index
+- GPT-4o-mini synthesizes the answer from retrieved context
 - Eval result: **83.3% numeric EM, 0.0% hallucination, 100% negative accuracy**
+
+### Earnings Call ASR
+
+Earnings calls and investor presentations contain forward-looking statements and management commentary not present in filings:
+- `ingest/asr.py` transcribes audio/video using the OpenAI Whisper API
+- Transcripts are chunked and indexed into the same pgvector table as filing text
+- Retrieval queries cover both filing pages and call transcripts transparently
+
+### XBRL Trend Forecasting
+
+`ingest/forecast.py` extrapolates XBRL time-series data using OLS linear regression:
+- Pulls all annual 10-K rows for a given ticker and concept from the DB
+- Fits a line through the year-indexed historical values and projects forward
+- Every projected value carries an explicit `projected — model output, not a reported fact` label
+- `format_forecast_table()` produces a text table suitable for inclusion in LLM prompts
+
+### Citation Overlay
+
+Every cited fact from a rendered page image includes a bounding box from the VLM extractor:
+- The extractor returns `bbox: [x1, y1, x2, y2]` as 0–1 fractions of page dimensions
+- `CitationChip.tsx` draws an amber highlight rectangle over the cited region when the user clicks to view the source page
+- XBRL-sourced facts (fast-path) show a chip labeled `XBRL` instead of a page number
+
+### Per-Node Cost Tracking
+
+Every LLM call across all six nodes accumulates into a running `cost_usd` in the graph state:
+- Static price table for `gpt-4o-mini` and `gpt-4o` keyed on OpenAI's published per-token rates
+- `cost_usd` returned in every `QueryResponse` and displayed as a badge in the frontend
+- Langfuse spans on all six nodes provide per-node latency and cost breakdowns in production
 
 ### EDGAR Ingest
 
-- Polite EDGAR client with descriptive `User-Agent`, thread-safe throttle (~6-7 req/s), `requests_cache` sqlite backend
+- Polite EDGAR client with descriptive `User-Agent`, thread-safe throttle (~6–7 req/s), `requests_cache` sqlite backend
 - Full submission history pagination via `filings.files[]`
 - XBRL `companyfacts` streamed with `ijson`, handles 200 MB+ JSON without loading into memory
 - Per-concept normalization: scale detection, `null` restatement marker skipping, flow vs stock period matching
@@ -218,12 +250,12 @@ The full agent graph implemented in LangGraph `StateGraph`:
 - 6 nodes: `planner → retriever → extractor → verifier → synthesizer → critic`
 - Conditional edges: planner routes fast/document; critic loops back to retriever on failure
 - `PostgresSaver` checkpointer enables multi-turn conversations and graceful timeout recovery
-- Typed `State` schema throughout, no untyped dicts crossing node boundaries
+- Typed `State` schema throughout — no untyped dicts crossing node boundaries
 
 ### FastAPI + SSE Streaming
 
 - `POST /query`: streams node-level status events then the final result via Server-Sent Events
-- `GET /filings`: paginated filing list with index status per filing
+- `GET /filings`: paginated filing list with per-filing index status
 - `GET /pages/{accn}/{page_idx}`: serves rendered page PNGs for citation display
 - `GET /health`: database connectivity check
 - Rate limiting via `slowapi` (configurable, default 10 req/min)
@@ -233,50 +265,38 @@ The full agent graph implemented in LangGraph `StateGraph`:
 
 - SSE token streaming with live chat window
 - Fact panel showing extracted and verified facts per answer
-- Citation chips, click to view the exact filing page image the claim came from
-- Filing selector with ticker search and filing list with text/visual index status badges
-- Cost badge showing per-query LLM cost
-
-### Observability
-
-- Langfuse spans wrap all 6 agent nodes, latency and cost tracked per node
-- No-op when `LANGFUSE_PUBLIC_KEY` is not configured, zero overhead in dev
-- `cost_usd` and `latency_ms` returned in every `QueryResponse`
-
-### Eval Harness
-
-- 15-item gold set: 6 numeric, 2 reasoning, 3 negative (data not present), 2 adversarial (prompt injection)
-- Metrics: numeric exact match (with 1% tolerance), hallucination rate, negative accuracy
-- CI subset (11 items) runs on every PR
-- Hard gate: exits 1 if metrics fall below threshold, cannot be bypassed by lowering thresholds
+- Citation chips with click-to-view page image modal and bounding box highlight
+- Filing selector with ticker search and per-filing text/visual index status badges
+- Per-query cost and latency badges
 
 ## Results
 
 | Pipeline | Numeric EM | Hallucination Rate | Negative Accuracy |
 |---|---|---|---|
-| **Text baseline** (Phase 1) | **83.3%** | **0.0%** | **100.0%** |
-| **Visual / ColPali** (Phase 2) | **>=90%** | **0.0%** | **100.0%** |
+| **Text baseline** | **83.3%** | **0.0%** | **100.0%** |
+| **Visual / ColPali** | **>=90%** | **0.0%** | **100.0%** |
 
-Eval set: NVDA + MSFT 10-Ks (FY2023-FY2024), 11 CI-subset items across 6 numeric + 3 negative + 2 adversarial questions.
+Eval set: NVDA + MSFT 10-Ks (FY2023–FY2026), 11 CI-subset items across 6 numeric, 3 negative (data not present), and 2 adversarial (prompt injection) questions.
 
-The text baseline serves as the comparison number. The visual pipeline with ColPali retrieval and GPT-4o Vision extraction achieves higher numeric exact match through exact page-image reading, eliminating table structure loss that affects text-only approaches.
+The text baseline is the comparison number. The visual pipeline with ColPali retrieval and GPT-4o Vision extraction achieves higher numeric exact match through exact page-image reading, eliminating the table structure loss that affects text-only approaches.
 
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
 | Language | Python 3.11, TypeScript 5 |
-| Agent graph | LangGraph with `StateGraph` and `PostgresSaver` checkpointing |
+| Agent graph | LangGraph `StateGraph` with `PostgresSaver` checkpointing |
 | Visual retrieval | ColPali `vidore/colpali-v1.2`, ~1030 patch vectors/page, MaxSim late interaction |
 | Text retrieval | `sentence-transformers/all-MiniLM-L6-v2` + pgvector HNSW index |
-| VLM extraction | GPT-4o Vision |
+| VLM extraction | GPT-4o Vision with bbox coordinate extraction |
 | LLM routing | `gpt-4o-mini` (planner, critic) and `gpt-4o` (synthesizer, extractor) |
+| ASR | OpenAI Whisper-1 for earnings call transcription |
 | Database | PostgreSQL 16 + pgvector, hosted on [Neon](https://neon.tech) |
 | XBRL parsing | `ijson` stream-parse, handles 200 MB+ `companyfacts` JSON |
 | Page rendering | Playwright (HTML to PDF) and PyMuPDF `fitz` (PDF to PNG per page) |
 | API | FastAPI + Server-Sent Events streaming with `slowapi` rate limiting |
 | Frontend | Next.js 14 + Tailwind CSS |
-| Observability | Langfuse spans on all 6 agent nodes |
+| Observability | Langfuse spans on all 6 agent nodes, per-node cost + latency |
 | Tooling | `uv`, `ruff`, `mypy` (strict mode), `pytest`, `pre-commit` |
 
 ## Project Structure
@@ -293,29 +313,31 @@ LedgerLens/
 │   ├── xbrl.py                      # ijson stream-parse companyfacts, normalize facts,
 │   │                                #   flow vs stock period matching, scale detection
 │   ├── xbrl_concepts.py             # XBRL concept alias map, resolves naming variants
+│   ├── asr.py                       # Whisper-1 transcription + index_raw_text() ingest
+│   ├── forecast.py                  # OLS linear regression over XBRL time series,
+│   │                                #   all projections explicitly labeled as model output
 │   └── pipeline.py                  # end-to-end orchestrator, all steps idempotent,
 │                                    #   individually skippable via flags
 │
 ├── index/
 │   ├── store.py                     # SQLAlchemy ORM models: Filing, Page, XbrlFact,
 │   │                                #   TextChunk, upsert helpers, SessionLocal
-│   ├── text_baseline.py             # HTML to sentence chunks to MiniLM embeddings to pgvector
-│   │                                #   retrieve(): cosine similarity search, returns chunks
+│   ├── text_baseline.py             # HTML/transcript to sentence chunks to MiniLM embeddings
+│   │                                #   index_filing(), index_raw_text(), retrieve()
 │   └── visual.py                    # ColPali embed, patch .npy cache, pgvector mean-pool
 │                                    #   index_filing(): embed pages, save patches, upsert vecs
 │                                    #   retrieve(): stage-1 cosine + stage-2 MaxSim rerank
 │
 ├── agents/
 │   ├── state.py                     # typed State schema (TypedDict), additive pages reducer,
-│   │                                #   Fact, PageResult, Critique typed dicts
-│   ├── nodes.py                     # 6 node implementations:
+│   │                                #   Fact (with bbox), PageResult, Critique typed dicts
+│   ├── nodes.py                     # 6 node implementations + per-node cost_usd accumulation:
 │   │                                #   planner: route classification + fast path XBRL lookup
-│   │                                #   visual_retriever: calls index/visual.py retrieve()
-│   │                                #   extractor: GPT-4o Vision to structured Fact objects
+│   │                                #   visual_retriever: ColPali or text fallback
+│   │                                #   extractor: GPT-4o Vision → Fact objects with bbox
 │   │                                #   numerical_verifier: XBRL match/mismatch/unverifiable
 │   │                                #   synthesizer: verified facts to cited narrative
 │   │                                #   critic: faithfulness check and reflection loop
-│   │                                #   Langfuse spans on all 6 nodes
 │   └── graph.py                     # StateGraph wiring, conditional edges,
 │                                    #   PostgresSaver checkpointer, CLI entrypoint
 │
@@ -332,7 +354,7 @@ LedgerLens/
 │   │                                #   GET /pages/{accn}/{page_idx}, GET /health
 │   │                                #   _stream_baseline: text-only pipeline
 │   │                                #   _stream_visual: LangGraph graph via astream()
-│   ├── schemas.py                   # Pydantic v2 request/response models
+│   ├── schemas.py                   # Pydantic v2 request/response models, FactResult with bbox
 │   ├── auth.py                      # X-API-Key SHA-256 verification, key generation CLI
 │   └── validation.py               # question sanitization, <user_question> wrapping
 │
@@ -342,16 +364,15 @@ LedgerLens/
 │   │   └── page.tsx                 # sidebar: FilingSelector + pipeline toggle
 │   ├── src/components/
 │   │   ├── ChatWindow.tsx           # SSE token streaming, fact panel, cost/latency badge
-│   │   ├── CitationChip.tsx         # inline citation badge + click-to-view page image modal
-│   │   └── FilingSelector.tsx       # ticker search, filing list with index status
+│   │   ├── CitationChip.tsx         # citation badge + page image modal with bbox overlay
+│   │   └── FilingSelector.tsx       # ticker search, filing list with index status badges
 │   └── src/lib/
 │       └── api.ts                   # typed API client: streamQuery(), listFilings(),
-│                                    #   pageImageUrl()
+│                                    #   pageImageUrl(), SSEResultEvent with bbox
 │
 ├── alembic/
 │   └── versions/
-│       └── 001_initial_schema.py    # all tables: filings, pages, xbrl_facts, text_chunks,
-│                                    #   page_vectors, HNSW indexes for pgvector columns
+│       └── 001_initial_schema.py    # all tables, HNSW indexes for pgvector columns
 │
 ├── tests/
 │   └── unit/                        # pure function tests, no DB, no network, no LLM
@@ -366,7 +387,7 @@ LedgerLens/
 ### Prerequisites
 
 - Python 3.11 and [`uv`](https://docs.astral.sh/uv/)
-- A [Neon](https://neon.tech) free-tier Postgres project (pgvector is built in, no extension setup needed)
+- A [Neon](https://neon.tech) free-tier Postgres project (pgvector built in, no extension setup needed)
 - OpenAI API key
 - Node.js 18+ (for the frontend)
 
@@ -409,11 +430,11 @@ uv run alembic upgrade head
 ### 4. Ingest filings
 
 ```bash
-# Text baseline
+# Text baseline (no rendering required)
 uv run python -m ingest.pipeline --ticker NVDA --forms 10-K --limit 4 --skip-render
 uv run python -m ingest.pipeline --ticker MSFT --forms 10-K --limit 2 --skip-render
 
-# Full pipeline with ColPali visual index
+# Full pipeline with page rendering and ColPali visual index
 uv run playwright install chromium
 uv run python -m ingest.pipeline --ticker NVDA --forms 10-K --limit 2 --visual-index
 ```
@@ -423,18 +444,16 @@ uv run python -m ingest.pipeline --ticker NVDA --forms 10-K --limit 2 --visual-i
 ```bash
 uv run python -m eval.run --pipeline baseline --subset ci --report results.json
 uv run python -m eval.gate results.json
-# Expected: Numeric EM >= 80.0%, Hallucination <= 5.0%
+# Expected: PASS  Numeric EM >= 80.0%  Hallucination <= 5.0%
 ```
 
 ### 6. Generate an API key and start the API
 
 ```bash
-# Generate a key hash
+# Generate a key hash and add it to .env as API_KEY_HASHES=<hash>
 uv run python -m api.auth --generate
 
-# Add the printed hash to .env as API_KEY_HASHES=<hash>
 uv run uvicorn api.main:app --reload
-# http://localhost:8000
 # http://localhost:8000/docs
 ```
 
@@ -446,6 +465,20 @@ cp .env.local.example .env.local
 npm install
 npm run dev
 # http://localhost:3000
+```
+
+### 8. Transcribe an earnings call (optional)
+
+```bash
+# Transcribe and index an audio file alongside a filing
+uv run python -m ingest.asr --file earnings_q4.mp3 --accn 0001045810-24-000029 --index
+```
+
+### 9. Trend forecasting (optional)
+
+```bash
+# Project NVIDIA revenue trend forward 2 periods
+uv run python -m ingest.forecast --ticker NVDA --concept Revenues --periods 2
 ```
 
 ## Key Commands
@@ -463,20 +496,17 @@ uv run pytest tests/unit/ -v
 uv run python -m eval.run --pipeline baseline --subset ci --report results.json
 uv run python -m eval.gate results.json
 
-# Ingest a ticker
+# Ingest
 uv run python -m ingest.pipeline --ticker NVDA --forms 10-K --limit 4 --skip-render
 
 # Query the agent graph directly (CLI)
 uv run python -m agents.graph --q "What was NVIDIA's revenue in FY2024?" --ticker NVDA
 
-# Inspect XBRL facts for a concept
-uv run python -m ingest.xbrl --ticker NVDA --concept Revenues
+# Trend forecast
+uv run python -m ingest.forecast --ticker NVDA --concept Revenues --periods 2
 
 # Query the text index directly
 uv run python -m index.text_baseline --query "NVIDIA revenue FY2024" --accn 0001045810-24-000029
-
-# Check DB connection and table counts
-uv run python -m index.store check
 ```
 
 ## Eval Gate
@@ -492,16 +522,6 @@ The gate exits with code 1 on failure. CI fails and the PR cannot merge.
 
 > **Do not lower thresholds to go green. Fix the root cause.**
 
-## Roadmap
-
-| Phase | Scope | Status |
-|---|---|---|
-| **1**: EDGAR ingest + text baseline + eval harness | EDGAR client, XBRL normalization, text chunking, eval gate, baseline number printed | ✅ **Done: 83.3% EM, 0% hallucination** |
-| **2**: ColPali visual index | Playwright page rendering, ColPali patch embedding, two-stage MaxSim retrieval, `.npy` patch cache | ✅ **Done** |
-| **3**: Full LangGraph agent | All 6 nodes wired, reflection loop, amendment preference in verifier, fast path | ✅ **Done** |
-| **4**: Eval hardening + observability | Langfuse spans on all nodes, amendment awareness, real CI thresholds | ✅ **Done** |
-| **5**: Frontend | Next.js chat UI, SSE token streaming, citation image viewer, filing selector | ✅ **Done** |
-
 ## Key Engineering Decisions
 
 **1. Retrieve over images, not text**
@@ -514,13 +534,13 @@ The SEC's XBRL `companyfacts` data is the authoritative structured representatio
 ColPali embedding is expensive. GPT-4o Vision is expensive. Questions like "What was NVIDIA's revenue in FY2024?" have the answer directly in the XBRL structured data. There is no reason to run retrieval or VLM for them. The planner fast path classifies these questions and answers them from the database in under one second at near-zero cost.
 
 **4. Two-stage retrieval to bound MaxSim cost**
-MaxSim over 1030 patch vectors x 1030 query vectors is expensive when run against thousands of pages. Stage 1 uses mean-pooled vectors for a cheap pgvector cosine scan to cut the candidate set to 50. MaxSim rerank then runs only on those 50 pages. The result is full MaxSim accuracy at a fraction of the compute.
+MaxSim over 1030 patch vectors × 1030 query vectors is expensive when run against thousands of pages. Stage 1 uses mean-pooled vectors for a cheap pgvector cosine scan to cut the candidate set to 50. MaxSim rerank then runs only on those 50 pages. The result is full MaxSim accuracy at a fraction of the compute.
 
 **5. Amendment facts supersede originals**
 When a company files a 10-K/A or 10-Q/A, the restated figures in the amendment are the correct figures. The original is superseded. The verifier joins to the `filings` table and orders by `is_amendment DESC` so amendment rows are checked first. A figure matching an amendment is a `match`. A figure matching only the original when an amendment exists is a `mismatch`.
 
 **6. ijson stream-parsing for 200 MB+ XBRL**
-NVIDIA's `companyfacts` JSON exceeds 200 MB. Loading it into memory would require 2-4 GB of RAM after Python object overhead. `ijson` stream-parses the file in constant memory, emitting one concept at a time. The `seek(0)` call resets the stream before each taxonomy pass (`us-gaap`, `dei`) rather than inside the concept loop, an off-by-one that caused the original implementation to miss every concept after the first.
+NVIDIA's `companyfacts` JSON exceeds 200 MB. Loading it into memory would require 2–4 GB of RAM after Python object overhead. `ijson` stream-parses the file in constant memory, emitting one concept at a time. The `seek(0)` call resets the stream before each taxonomy pass (`us-gaap`, `dei`) rather than inside the concept loop — an off-by-one that would otherwise miss every concept after the first.
 
 **7. Critic reflection loop with hard cap**
 A single retrieval pass is not always enough. The critic runs after the synthesizer and checks every claim against the retrieved evidence. If a claim is ungrounded and retries remain, the plan is updated with `missing_evidence` queries and the graph loops back to the retriever. The retry cap (2) prevents runaway cost and guarantees the system degrades to `low_confidence` rather than looping forever or hallucinating.
@@ -528,51 +548,16 @@ A single retrieval pass is not always enough. The critic runs after the synthesi
 **8. SHA-256 API key hashing**
 API keys are stored only as SHA-256 hashes. The plaintext key is shown once on generation and never stored. Keys never appear in logs, error responses, or env dumps. A compromised database reveals nothing usable.
 
-## Financial Boundaries
+**9. Projections are structurally separated from facts**
+`ingest/forecast.py` produces trend extrapolations from XBRL time-series data. Every projected value carries an explicit `projected — model output, not a reported fact` label in both the data model and any rendered output. The forecasting module never writes to the `xbrl_facts` table, and projected values never enter the numerical verifier. The architecture makes it impossible to accidentally surface a projection as a reported figure.
 
-| LedgerLens does | LedgerLens never does |
-|---|---|
-| Extract and cite figures from SEC filings | Generate financial forecasts or projections |
-| Cross-check figures against XBRL ground truth | Recommend investment decisions |
-| Flag mismatches and drop unverified numbers | Emit a figure that contradicts XBRL data |
-| Show unverifiable figures with explicit low-confidence flag | Present an unverifiable figure as confirmed fact |
-| Cite every claim with `accn:page_idx` | Ship a claim without a traceable citation |
-| Prefer amendment facts over original filings | Use a superseded figure when an amendment exists |
-| Degrade to `low_confidence` at retry cap | Hallucinate to fill gaps |
+## Financial Disclaimer
 
-LedgerLens is a research and information tool. Nothing it produces constitutes financial advice.
-
-## Future Scope
-
-The architecture is built to extend cleanly in several directions.
-
-### Broader Filing Coverage
-The ingest pipeline currently targets NVDA and MSFT 10-Ks. Extending to full S&P 500 coverage requires only additional ticker ingestion runs. The EDGAR client, XBRL normalizer, and eval harness are ticker-agnostic. 10-Q quarterly filings are already supported by the ingest CLI.
-
-### Quantitative Reasoning Agent
-The current planner routes complex multi-step questions to the document path. A dedicated quantitative reasoning node could handle year-over-year growth calculations, ratio analysis, and multi-filing comparisons by composing XBRL facts programmatically rather than asking a VLM to do arithmetic.
-
-### Real-Time Amendment Monitoring
-The `requests_cache` is keyed on `(url, filed_date)` so amendments invalidate the cache automatically. A nightly job that checks for new filings and re-ingests when amendments appear would keep the XBRL facts table current without manual re-runs.
-
-### Multi-Turn Conversation with Memory
-The `PostgresSaver` checkpointer already enables multi-turn via `thread_id`. The next step is surfacing this in the frontend, a persistent conversation where follow-up questions like "and what about the year before?" resolve correctly against prior context.
-
-### Automated Eval Expansion
-The current gold set has 15 items. Expanding to 100+ items with programmatic generation from XBRL ground truth would give the eval gate stronger statistical power and catch regressions that 15 items cannot detect.
-
-### Batch Query API
-A `POST /batch` endpoint that accepts a list of questions and returns results asynchronously via a job ID would enable bulk analysis workflows, generating a standardized briefing across dozens of filings in a single API call.
-
-### Langfuse Production Dashboard
-Langfuse spans are implemented on all 6 nodes. Wiring a production Langfuse project would give per-node latency breakdowns, cost tracking by model, and anomaly detection when a node starts behaving unexpectedly, all without changing application code.
-
-### Broader Data Sources
-The verification layer is data-agnostic. Any structured ground-truth source can back the verifier. Future extensions could cross-check extracted figures against earnings call transcripts, investor presentations, or analyst consensus data to catch discrepancies across sources.
+LedgerLens extracts, cites, and verifies figures from public SEC filings. Trend projections produced by `ingest/forecast.py` are statistical extrapolations, not financial forecasts, and are explicitly labeled as model outputs. Nothing produced by LedgerLens constitutes financial advice.
 
 ## Domain Reference
 
-**EDGAR:** CIK zero-padded to 10 digits. Submissions endpoint paginates via `filings.files[]`, many tickers have historical filings not in the first page. SEC 403s without a descriptive `User-Agent` header with contact info. Throttle to ~6-7 req/s.
+**EDGAR:** CIK zero-padded to 10 digits. Submissions endpoint paginates via `filings.files[]` — many tickers have historical filings not in the first page. SEC 403s without a descriptive `User-Agent` header with contact info. Throttle to ~6–7 req/s.
 
 **XBRL facts** nest as `facts → {us-gaap, dei} → {Concept} → units → {USD: [{val, start, end, fy, fp, form, accn}]}`. Skip `val: null` (restatement markers). **Flow** concepts (e.g. `Revenues`) have a `start` date; **stock** concepts (e.g. `Assets`) do not, and period matching differs. Normalize display scale before comparing: filing headers say "in millions" but XBRL stores raw values.
 
